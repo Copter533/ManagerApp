@@ -5,7 +5,7 @@ from math import atan2, sin, cos, radians
 from random import randint
 
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QTime
-from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen, QKeySequence
+from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
     QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect
 
