@@ -1,11 +1,13 @@
 import colorsys
 import json
 import os.path
+import sys
+import traceback
 from collections.abc import Iterable
 from datetime import datetime, timedelta, date
 from random import uniform
 
-from tags import TagList
+from tags import TagList, Tags
 
 days_of_week = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС']
 months = [
@@ -28,6 +30,10 @@ def rgb_to_hex(rgb_color):
 
 def hex_to_rgb(hex_color):
     return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+def str_time(timestamp: int, leading_zero=False):
+    h, m = divmod(int(timestamp), 60)
+    return f'{"0" if h < 10 and leading_zero else ""}{h}:{"0" if m < 10 else ""}{m}'
 
 def word_case(num, for1, for2, for5, pref=None):
     if pref is None: pref = f'{num} '
@@ -107,6 +113,15 @@ class MultiDate:
 
         return tuple(set(value)) if isinstance(value, Iterable) else (value,)
 
+    def have_time_intersects(self, other, when=datetime.now()):
+        other: MultiDate
+        other_stamps = other.get_timestamps(when)
+        for stamp1 in self.get_timestamps(when):
+            for stamp2 in other_stamps:
+                if max(stamp1[0], stamp2[0]) <= min(stamp1[1], stamp2[1]):
+                    return True
+        return False
+
     @classmethod
     def from_json(cls, obj: dict):
         res = cls()
@@ -119,6 +134,7 @@ class MultiDate:
                 month    = data.get('mon'),
                 time     = data.get('time')
             )
+        res._states.sort(key=cls.get_sort_value_for_state)
         return res
 
     def to_json(self):
@@ -153,21 +169,28 @@ class MultiDate:
             return False
         return True
 
-    def get_timestamps(self, targ_state):
-        return [i for i in self._states if self.match(i, targ_state)]
+    def get_timestamps(self, when: dict | date) -> list[list[int]]:
+        targ_state = when if isinstance(when, dict) else {
+            "parity": when.isocalendar().week % 2,
+            "dayW": when.isoweekday(),
+            "dayM": when.day,
+            "mon": when.month
+        }
+        return [i['time'] for i in self._states if self.match(i, targ_state)]
 
-    def get_sort_value(self):
-        now = datetime.now()
-        minimum = 999 # Макс 8
-        for state in self._states:
-            dayW = min(state['dayW']) if 'dayW' in state else min(
-                [datetime(now.year, min(state['mon'] or [now.month]), day).isoweekday()
-                 for day in state['dayM']]
-            )
-            minimum = min(minimum,
-                dayW + state['time'][0] / (24*60)
-            )
-        return minimum
+    def get_sort_value(self, when=None):
+        return 999 if not self._states else min(
+            self.get_sort_value_for_state(state, when) for state in self._states
+        )
+
+    @staticmethod
+    def get_sort_value_for_state(state: dict, when=None):
+        now = when or datetime.now()
+        dayW = min(state['dayW']) if 'dayW' in state else min(
+            [datetime(now.year, min(state['mon'] or [now.month]), day).isoweekday()
+             for day in state['dayM']]
+        )
+        return dayW + state['time'][0] / (24 * 60)
 
     @staticmethod
     def tuple_range_to_str(v: tuple, replacer=None):
@@ -224,9 +247,11 @@ class MultiDate:
 
 
 class ScheduleEvent:
-    def __init__(self, name, multi_date: MultiDate, times=0, tags: TagList = None, anchor_date: datetime = None,
+    def __init__(self, name, multi_date: MultiDate, description: str = None,
+                 times=0, tags: TagList = None, anchor_date: datetime = None,
                  canceled_dates: list[date] = None, color: list[int | int | int] | str = None):
         self.name  = name
+        self.desc  = description
         self.date  = multi_date
         self.tags  = tags or TagList()
 
@@ -239,8 +264,35 @@ class ScheduleEvent:
         if color: self.color = hex_to_rgb(color) if isinstance(color, str) else color
         else:     self.color = [int(i * 255) for i in colorsys.hsv_to_rgb(uniform(0, 1), 0.8, 0.5)]
 
-    def __eq__(self, other):
-        return self.name == other.name if isinstance(other, ScheduleEvent) else self.name == other
+    @classmethod
+    def from_json(cls, data: dict):
+        name       = data['name']
+        multi_date = MultiDate.from_json(data['date'])
+        tags       = data.get('tags', {})
+        desc       = data.get('desc')
+
+        times = data.get('times', 0)
+        anchor = str_to_datetime(data.get('anchor')) if 'anchor' in data else None
+
+        cancel_dates = [date(*map(int, day.split('-'))) for day in data.get('canceled', '').split(',') if day]
+
+        return cls(name, multi_date, times=times, description=desc, tags=TagList.from_json(tags),
+                   anchor_date=anchor, canceled_dates=cancel_dates,
+                   color=data.get('color'))
+
+    def to_json(self):
+        data = {
+            'name': self.name,
+            'date': self.date.to_json(),
+            'anchor': datetime_to_str(self.anchor_date)
+        }
+        if self.desc:       data['desc']  = self.desc
+        if self.times:      data['times'] = self.times
+        if self.tags:       data['tags']  = self.tags.to_json()
+        if self.have_color: data['color'] = rgb_to_hex(self.color)
+
+        if self.canceled_dates: data['canceled'] = ','.join(map(str, self.canceled_dates))
+        return data
 
     def can_occur(self, check_date: date | datetime):
         if isinstance(check_date, datetime): check_date = check_date.date()
@@ -253,44 +305,20 @@ class ScheduleEvent:
             if self.get_timestamps(iterator):
                 if (self.times == 0 or times > 0) and iterator == check_date: return True
                 times -= 1
-
         return False
 
-    @classmethod
-    def from_json(cls, data: dict):
-        name       = data['name']
-        multi_date = MultiDate.from_json(data['date'])
-        tags       = data.get('tags', {})
+    def can_block(self, other):
+        if other.tags.have(Tags.IMPORTANT.YES): return False
+        if not self.tags.have(Tags.REPLACER.YES): return False
 
-        times = data.get('times', 0)
-        anchor = str_to_datetime(data.get('anchor')) if 'anchor' in data else None
-
-        cancel_dates = [date(*map(int, day.split('-'))) for day in data.get('canceled', '').split(',') if day]
-
-        return cls(name, multi_date, times, tags=TagList.from_json(tags),
-                   anchor_date=anchor, canceled_dates=cancel_dates,
-                   color=data.get('color'))
-
-    def to_json(self):
-        data = {
-            'name': self.name,
-            'date': self.date.to_json(),
-            'anchor': datetime_to_str(self.anchor_date)
-        }
-        if self.times:      data['times'] = self.times
-        if self.tags:       data['tags']  = self.tags.to_json()
-        if self.have_color: data['color'] = rgb_to_hex(self.color)
-
-        if self.canceled_dates: data['canceled'] = ','.join(map(str, self.canceled_dates))
-        return data
+        if self.tags.get(Tags.LABOR) is None: return True
+        return self.tags.get(Tags.LABOR) == other.tags.get(Tags.LABOR)
 
     def get_timestamps(self, when: date = datetime.now()):
-        return self.date.get_timestamps({
-            "parity": when.isocalendar().week % 2,
-            "dayW": when.isoweekday(),
-            "dayM": when.day,
-            "mon":  when.month
-        })
+        return self.date.get_timestamps(when)
+
+    def __eq__(self, other):
+        return self.name == other.name if isinstance(other, ScheduleEvent) else self.name == other
 
     def __str__(self):
         return f'Событие "{self.name}" ({self.date})'
@@ -352,6 +380,29 @@ def get_events_str(events):
             res += f' - {event.date.str_state(state)}\n'
         res += '\n'
     return res
+
+def log_error():
+    if not os.path.exists("error_logs"): os.mkdir("error_logs")
+
+    now = datetime.now()
+    with open(f'error_logs/{now.date()} {now.hour}-'
+              f'{"0" if now.minute < 10 else ""}{now.minute}-'
+              f'{"0" if now.second < 10 else ""}{now.second}.txt',
+              "w", encoding="utf-8") as f:
+
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        __local_vars: dict = exc_traceback.tb_frame.f_locals
+
+        f.write(f"TYPE    : {exc_type.__name__}\n")
+        f.write(f"MESSAGE : {exc_value}\n")
+        f.write("VALUES:\n")
+        __variables: dict = __local_vars.copy()
+        for __var_name, __value in __variables.items():
+            if __var_name.startswith('__'): continue
+            f.write(f" - {__var_name:>15} : {__value}\n")
+
+        f.write("\n\n\n")
+        traceback.print_tb(exc_traceback, file=f)
 
 if __name__ == '__main__':
     cfg = Config.load()

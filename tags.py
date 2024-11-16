@@ -5,6 +5,7 @@ class Tag:
         self.group = None
 
     def __eq__(self, other):
+        if other is None: return False
         return self.name == other.name and self.group == other.group
 
     def __repr__(self):
@@ -28,17 +29,31 @@ class Tags:
 
     class IMPORTANT:
         name = "Важно"
-        NO  = Tag("Нет", 'red')
         YES = Tag("Да",  'green')
+        NO  = Tag("Нет", 'red')
+
+    class TRANSPARENT:
+        name = "Прозрачное"
+        YES = Tag("Да",  'green')
+        NO  = Tag("Нет", 'red')
+
+    class REPLACER:
+        name = "Заменяющее"
+        YES = Tag("Да",  'green')
+        NO  = Tag("Нет", 'red')
+
+    class _UniversalTag:
+        name: str
 
     @classmethod
-    def dict_like(cls) -> dict[WHERE, tuple[Tag]]:
+    def dict_like(cls) -> dict[_UniversalTag, tuple[Tag]]:
         # noinspection PyTypeChecker
         return {i: tuple(j for j in i.__dict__.values() if isinstance(j, Tag))
-                for i in cls.__dict__.values() if isinstance(i, type)}
+                for k, i in cls.__dict__.items() if isinstance(i, type) and not k.startswith('_')}
 
 for tag_group, tags in Tags.dict_like().items():
-    for tag in tags: tag.group = tag_group
+    for tag in tags:
+        tag.group = tag_group
 
 
 class TagList:
@@ -60,17 +75,23 @@ class TagList:
     def have(self, item: Tag):
         return item in self._container.values()
 
-    def get(self, group: type[Tags.WHERE | Tags.IMPORTANT]):
-        if group.name in self._container: return self._container[group.name]
-        for tag in group.__dict__.values():
-            if isinstance(tag, Tag):
-                return tag
-        return None
+    def get(self, group):
+        return self._container.get(group.name)
+
+    def have_to_go(self):
+        """А нужно ли мне ИДТИ на это занятие?"""
+        if Tags.IMPORTANT.YES in self: return True
+        if Tags.IMPORTANT.NO in self: return False
+        if Tags.TRANSPARENT.YES in self: return False
+
+        if Tags.LABOR.LESSON in self: return True
+        return False
 
     # noinspection PyUnresolvedReferences
     def to_json(self):
         data = {}
         for k, v in Tags.__dict__.items():
+            if k.startswith('_'): continue
             if not (isinstance(v, type) and v.name in self._container): continue
             values = tuple(
                 (name, value) for name, value in v.__dict__.items()
@@ -90,7 +111,7 @@ class TagList:
         return cls(*[
             get_value([value for name, value in k.__dict__.items() if isinstance(value, Tag) and name == data[k.__name__]])
             for k, v in Tags.dict_like().items()
-            if k.__name__ in data
+            if not k.__name__.startswith('_') and k.__name__ in data
         ])
 
 if __name__ == '__main__':

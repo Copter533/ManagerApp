@@ -1,14 +1,14 @@
 from datetime import datetime, date
 
 from PyQt6.QtCore import Qt, QSize, QRect, QPoint
-from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase
+from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit
 )
 
 from tags import Tags, Tag
-from utils import days_of_week, months, ScheduleEvent, rgb_to_hex
+from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -67,13 +67,25 @@ def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40,
         }}
     """)
 
-def recolor_icon(path, color):
-    pixmap = QPixmap("icons/" + path)
+
+def recolor_icon(path, color: QColor, scale=1):
+    # Загружаем оригинальный pixmap
+    original_pixmap = QPixmap("icons/" + path)
+
+    # Создаем новый pixmap с учетом масштаба
+    size = original_pixmap.size() * scale
+    pixmap = QPixmap(size)
+    pixmap.fill(Qt.GlobalColor.transparent)  # Прозрачный фон
+
+    # Рисуем отмасштабированное изображение и применяем цвет
     painter = QPainter(pixmap)
+    painter.drawPixmap(0, 0, original_pixmap.scaled(size))  # Масштабируем исходный pixmap
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
     painter.fillRect(pixmap.rect(), color)
     painter.end()
+
     return QIcon(pixmap)
+
 
 def simple_label(name, size, font="Calibri", fixed_width=None, bold=False, italic=False):
     lb = QLabel(name)
@@ -114,6 +126,28 @@ def simple_line_input(default_text, font_size, font="calibri", bold=False, itali
     line_edit.setStyleSheet("border-bottom: 3px solid lightblue;")
 
     return line_edit
+
+def simple_text_input(default_text, font_size, font="calibri", bold=False, italic=False):
+    font = QFont(font, font_size)
+    font.setItalic(italic)
+    font.setBold(bold)
+
+    text_edit = QTextEdit()
+    text_edit.setFixedHeight(110)
+    text_edit.verticalScrollBar().setHidden(True)
+    text_edit.setFont(font)
+    text_edit.setPlaceholderText(default_text)
+    text_edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
+    text_edit.setStyleSheet("border-bottom: 3px solid lightblue;")
+
+    return text_edit
+
+def simple_tray_action(parent, name, callback=None):
+    action = QAction(name, parent)
+
+    if callback: # noinspection PyUnresolvedReferences
+        action.triggered.connect(callback)
+    return action
 
 def color_select_slider(text, size, min_, max_, callback=None, font="calibri"):
     layout = QHBoxLayout()
@@ -354,8 +388,7 @@ class TimeSelector(QWidget):
 
     @staticmethod
     def get_timestr(value, leading_zero=True):
-        h, m = divmod(value * 10, 60)
-        return f'{"0" if h < 10 and leading_zero else ""}{h}:{"0" if m < 10 else ""}{m}'
+        return str_time(value * 10, leading_zero=leading_zero)
 
     def get_timedur(self):
         return f'{self.get_timestr(self.current_min)}-{self.get_timestr(self.current_max)}'

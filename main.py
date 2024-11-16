@@ -1,67 +1,149 @@
-import sys
 import calendar
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime, timedelta, date
 from math import atan2, sin, cos, radians
 from random import randint
 
-from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QTime
+from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QTime, QRectF, QRect
 from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
-    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect
+    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu
 
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
-    EventSelector
+    EventSelector, simple_text_input, simple_tray_action, recolor_icon
 from tags import Tags, TagList
-from utils import months, days_of_week, ScheduleEvent, MultiDate, interpolate, rgb_to_hex, Config
+from utils import months, days_of_week, ScheduleEvent, MultiDate, interpolate, rgb_to_hex, Config, str_time, log_error
 
 
 class ScheduleEventView(QFrame):
     def __init__(self, parent, app, event: ScheduleEvent, stamp: dict, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setParent(parent)
+        app: MainWindow
+        parent: TimeColumnView
 
         self.app = app
-        self.stime = stamp['time'][0]
-        self.etime = stamp['time'][1]
-        self.stamp = stamp
+        self.now: date = parent.now
+        self.stime = stamp[0]
+        self.etime = stamp[1]
 
         self._event = event # Не юзать дату отсюда!
         self.name  = event.name
         self.color = event.color
-        self.set_color()
 
         self.frame     = 0
         self.important = False
+        self.expired   = False
+
+        self._highlight_color = None
+        self._highlight_speed = None
+
+        self.bgr_renderer = None
+        if event.tags.have(Tags.WHERE.CRON):  self.set_background_icon("cron.svg")
+        if event.tags.have(Tags.WHERE.LOMO):  self.set_background_icon("lomo.svg")
+        if event.tags.have(Tags.WHERE.SPORT): self.set_background_icon("sword.svg", 1.5, 110, 70)
+        if event.tags.have(Tags.WHERE.NOV):   self.set_background_icon("home.svg")
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.create_ui_title()
         self.create_ui_time()
         self.create_ui_callback_button()
+
+        if event.desc:
+            newline = "\n"
+            self.setToolTip(f"""<div style="text-align: center; font-size: 20px;">
+                <b>Описание:</b></div>
+                {"<br>".join(event.desc.split(newline))}
+            """)
+
         self.setLayout(self.layout)
         self.show()
 
-        if Tags.IMPORTANT.YES in event.tags:
-            self.make_important()
-
-        self.timer = QTimer(self)
+        self.important_timer = QTimer(self)
         # noinspection PyUnresolvedReferences
-        self.timer.timeout.connect(self.next_frame)
-        self.timer.start(1_000 // 60)  # 1 000 мс = 1 секунда
+        self.important_timer.timeout.connect(self.next_frame)
 
-    def set_color(self, inner_alpha=200):
-        self.setObjectName("eventFrame")
+        self.expires_timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.expires_timer.timeout.connect(self.check_expired)
+
+        self.update_style()
+
+    def set_highlighted(self, r, g, b, speed):
+        self._highlight_color = (r, g, b)
+        self._highlight_speed = speed
+
+    def set_background_icon(self, path, scale=1.2, offset_x=80, offset_y=90):
+        self.bgr_renderer = QSvgRenderer(f"icons/{path}")
+        svg_size = self.bgr_renderer.defaultSize()
+        self.bgr_icon_width  = int(svg_size.width()  * scale)
+        self.bgr_icon_height = int(svg_size.height() * scale)
+        self.bgr_offset_x = offset_x
+        self.bgr_offset_y = offset_y
+
+    def set_color(self, border: str, alpha):
         self.setStyleSheet(f"""
             #eventFrame {{
-                background-color: rgba({self.color[0]}, {self.color[1]}, {self.color[2]}, {inner_alpha});
+                background-color: rgba({self.color[0]}, {self.color[1]}, {self.color[2]}, {alpha});
                 border-radius: 19px;
-                border: 5px solid black;
+                border: {border};
                 padding: 10px;
             }}
+            QToolTip {{
+                background-color: #333;
+                color: #fff;
+                border: 2px solid #888;
+                padding: 5px;
+                font-size: 14px;
+                font-family: calibri;
+            }}
         """)
+
+    def update_style(self):
+        self.important_timer.stop()
+        self.expires_timer.stop()
+
+        # 10px solid rgb(30, 30, 30)
+        self.setObjectName("eventFrame")
+        self.set_color("5px solid black", 200)
+
+        if self.check_expired(): self.make_expired()
+        elif self._event.times > 0:
+            self.expires_timer.start(1000)
+
+        if Tags.TRANSPARENT.YES in self._event.tags or self.expired:
+            self.set_transparency(0.3)
+        else:
+            self.set_transparency(0.999)
+
+        if Tags.IMPORTANT.YES in self._event.tags:
+            self.make_important()
+
+    def set_transparency(self, opacity):
+        opacity_effect = QGraphicsOpacityEffect()
+        opacity_effect.setOpacity(opacity)
+        self.setGraphicsEffect(opacity_effect)
+
+    def make_expired(self):
+        self.expired = True
+        self.expires_timer.stop()
+
+    def make_important(self):
+        if self.expired:
+            self.set_highlighted(100, 100, 100, 200)
+        else:
+            self.set_highlighted(255,   0,   0, 100)
+
+        self.important = True
+        self.important_timer.start(1_000 // 60)
+
+        self.set_color("10px solid rgb(30, 30, 30);", 250)
 
     def get_where(self):
         return self._event.tags.get(Tags.WHERE)
@@ -69,17 +151,27 @@ class ScheduleEventView(QFrame):
     def get_tags(self):
         return self._event.tags
 
-    def make_important(self):
-        self.important = True
-        self.setObjectName("eventFrame")
-        self.setStyleSheet(f"""
-            #eventFrame {{
-                background-color: rgba({self.color[0]}, {self.color[1]}, {self.color[2]}, 250);
-                border-radius: 19px;
-                border: 10px solid rgb(30, 30, 30);
-                padding: 10px;
-            }}
-        """)
+    def is_today(self):
+        return self.now == datetime.now().date()
+
+    def get_event_and_time(self):
+        return self._event, self.stime, self.etime
+
+    def check_expired(self):
+        if self._event.times == 0: return False
+        if self.expired: return True
+
+        now = datetime.now()
+        stamp_now = now.hour * 60 + now.minute
+        if self.now < now.date(): return True
+
+        stamps = self._event.get_timestamps(now)
+
+        if not stamps: return False
+        for stamp in stamps:
+            if stamp[1] > stamp_now:
+                return False
+        return True
 
     def create_ui_title(self):
         lb = QLabel()
@@ -121,17 +213,37 @@ class ScheduleEventView(QFrame):
         self.layout.addWidget(button)
 
     def callback_button(self):
-        self.task_form = TaskForm(self.app, self._event)
+        self.task_form = TaskForm(self.app, self._event, when=self.now)
         self.task_form.show()
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.important: self.paint_highlighted_border()
+        if self.bgr_renderer:
+            self.paint_background_icon()
+        if self._highlight_color is not None and self._highlight_speed is not None:
+            self.paint_highlighted_border()
 
     def next_frame(self):
         if not self.important: return
         self.frame += 1
         self.update()
+
+    def paint_background_icon(self):
+        painter = QPainter(self)
+        painter.setOpacity(0.3 if self.is_today() else 0.1)
+
+        border_width = 20
+        painter.setClipRect(QRect(
+            border_width // 2,
+            border_width // 2,
+            self.width()  - border_width,
+            self.height() - border_width
+        ))
+
+        x = int(self.width()  - self.bgr_icon_width  - border_width + self.bgr_offset_x)
+        y = int(self.height() - self.bgr_icon_height - border_width + self.bgr_offset_y)
+
+        self.bgr_renderer.render(painter, QRectF(x, y, self.bgr_icon_width, self.bgr_icon_height))
 
     def paint_highlighted_border(self):
         painter = QPainter(self)
@@ -158,7 +270,7 @@ class ScheduleEventView(QFrame):
         h, w = self.height(), self.width()
         if flip_y: h, w = w, h
 
-        max_frame = 120
+        max_frame = self._highlight_speed
         frac  = (( self.frame                   % (max_frame + 2)) - 1) * 2 / max_frame - 1
         frac2 = (((self.frame + max_frame // 2) % (max_frame + 2)) - 1) * 2 / max_frame - 1
 
@@ -186,12 +298,12 @@ class ScheduleEventView(QFrame):
             if flip_y:
                 painter.fillRect(
                     p1, p - half_size,
-                    p2 - p1 + 1, half_size * 2, QColor(255, 0, 0)
+                    p2 - p1 + 1, half_size * 2, QColor(*self._highlight_color)
                 )
             else:
                 painter.fillRect(
                     p - half_size, p1,
-                    half_size * 2, p2 - p1 + 1, QColor(255, 0, 0)
+                    half_size * 2, p2 - p1 + 1, QColor(*self._highlight_color)
                 )
 
     def resizeEvent(self, a0):
@@ -206,15 +318,14 @@ class ScheduleEventView(QFrame):
 
         self.time_label.setText((" - " if w > 170 else "\n").join(self.time_texts))
         self.time_label.setHidden(self.height() < 200)
-        print(1, self.height())
 
 
 class TimeColumnView(QFrame):
     def __init__(self, app, i, now, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.i = i
-        self.app = app
-        self.now = now
+        self.app: MainWindow = app
+        self.now: date = now
         self.original_now = now
         self.margin = 20
 
@@ -222,7 +333,9 @@ class TimeColumnView(QFrame):
         self.max_hour = 24
 
         self.views: list[ScheduleEventView] = []
-        self.is_free = True
+
+        self.is_free      = True
+        self.is_important = False
 
         self.set_view_height(self.app.views_height)
 
@@ -247,19 +360,48 @@ class TimeColumnView(QFrame):
         for view in self.views:
             view.deleteLater()
         self.views.clear()
+        events_and_stamps = []
 
-        self.is_free = True
+        # Сброс переменных
+        self.is_free      = True
+        self.is_important = False
+
         for event in self.app.scheduled_events:
             if not event.can_occur(self.now): continue
             stamps = event.get_timestamps(self.now)
             for stamp in stamps:
+                events_and_stamps.append([event, stamp])
+
+        # Проверка пересечений
+        for event1, stamp1 in events_and_stamps:
+            event: ScheduleEvent
+            for i, (event2, stamp2) in enumerate(events_and_stamps):
+                if event1 == event2: continue
+                if stamp1 is None: continue
+                if stamp2 is None: continue
+                if not event1.can_block(event2): continue
+                if not event1.get_timestamps(self.now): continue
+                if not event2.get_timestamps(self.now): continue
+                if not (max(stamp1[0], stamp2[0]) <= min(stamp1[1], stamp2[1])): continue
+                events_and_stamps[i][1] = None
+
+        for event, stamp in events_and_stamps:
+            if stamp is None: continue
+            se = ScheduleEventView(self, self.app, event, stamp)
+            if event.tags.have(Tags.TRANSPARENT.YES):
+                self.views.insert(0, se)
+                se.lower()
+            else: self.views.append(se)
+            if event.tags.have_to_go():
                 self.is_free = False
-                self.views.append(ScheduleEventView(self, self.app, event, stamp))
+            if se.important and not se.check_expired():
+                self.is_important = True
 
         self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        self.paint_sleep_reminder() # self.blocked_hour
         self.paint_timestamps()
 
         if self.is_free: self.paint_no_tasks()
@@ -295,7 +437,8 @@ class TimeColumnView(QFrame):
                 if hour == self.max_hour: break
 
             painter.setPen(QPen(QColor(30, 30, 30, 20), 1))
-            painter.drawText(15, 10, f'{"0" if hour < 10 else ""}{hour}:00')
+            if not hour == self.blocked_hour:
+                painter.drawText(15, 10, f'{"0" if hour < 10 else ""}{hour}:00')
 
             painter.translate(0, self.per_hour)
 
@@ -328,7 +471,7 @@ class TimeColumnView(QFrame):
         )
 
         arr = sorted(
-            [view for view in self.views if view.get_tags().have(Tags.LABOR.LESSON)],
+            [view for view in self.views if view.get_tags().have_to_go() and not view.expired],
             key=lambda x: x.stime)
         if not arr: return
 
@@ -378,6 +521,60 @@ class TimeColumnView(QFrame):
             else:          painter.drawText(x - 25, mid + 1, timestr)
 
             self.set_painter_font(painter, bold=False)
+
+    def paint_sleep_reminder(self):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(30, 30, 30), 3))
+
+        time_needed = 11 * 60
+
+        self.blocked_hour = None
+        tomorrow = self.now + timedelta(1)
+
+        min_time = 99999
+        for event, stime, etime in self.app.get_scheduled_events_and_time():
+            if not event.can_occur(tomorrow) or not event.tags.have_to_go(): continue
+            if not event.get_timestamps(tomorrow): continue
+
+            min_time = min(min_time, stime)
+
+        if min_time == 99999: return
+
+        self.set_painter_font(painter, size=20, bold=False)
+
+        time_diff = min_time - time_needed
+        if time_diff >= 0:
+            message = str_time(time_diff, leading_zero=True)
+
+            time_diff = 24 * 60 - 10
+            x_offset = 32
+        else:
+            time_diff += 24 * 60
+
+            message = str_time(time_diff, leading_zero=True)
+            x_offset = 32
+
+            if time_diff < self.min_hour * 60: return
+            if time_diff > self.max_hour * 60: return
+
+        if time_diff < 22 * 60:
+            time_diff = 22 * 60
+            self.set_painter_font(painter, size=16, italic=True)
+            painter.setPen(QPen(QColor(200, 30, 30), 5))
+
+            message  = "Ты уверен?"
+            x_offset = 50
+
+        if time_diff / 60 - time_diff // 60 <= 10: self.blocked_hour = time_diff // 60
+        if time_diff / 60 - time_diff // 60 >= 50: self.blocked_hour = time_diff // 60 + 1
+        y = int((time_diff / 60 - self.min_hour) * self.per_hour) + self.margin
+        painter.drawText(self.width() // 2 - x_offset, y - 3, message)
+        painter.drawLine(15, y, self.width() - 15, y)
+        self.paint_arrow_head(painter, 15, 70,
+                              self.width() // 2,
+                              self.height(),
+                              None, y + 5, arrow1=False)
 
     @staticmethod
     def paint_arrow_head(painter: QPainter, length, arrow_angle, x1, y1, x2=None, y2=None, arrow1=True, arrow2=True):
@@ -442,11 +639,12 @@ class TimeColumnView(QFrame):
 
 
 class TaskForm(QFrame):
-    def __init__(self, main_window, to_edit: ScheduleEvent = None, *args, **kwargs):
+    def __init__(self, main_window, to_edit: ScheduleEvent = None, when = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         w, h = 0.4, 0.8
 
+        self.now = when or datetime.now()
         self.edit_target = None if to_edit is None else to_edit.name
 
         size = app.primaryScreen().size()
@@ -465,6 +663,7 @@ class TaskForm(QFrame):
         self.main_layout = QVBoxLayout()
         for widget in self.framed_ui(
             [QVBoxLayout, self.create_ui_task_name],
+            [QVBoxLayout, self.create_ui_task_desc],
             [QVBoxLayout, self.create_ui_date_selector],
             [QHBoxLayout, self.create_ui_complete_count],
             [QHBoxLayout, self.create_ui_anchor_date],
@@ -536,6 +735,9 @@ class TaskForm(QFrame):
 
         self.lb_anchor_month.setText(f' {months[new_month-1][0].capitalize()} ')
         self.update_anchor_day(new_day or self.anchor_day, clamp_top=True)
+
+    def set_cancel_now(self):
+        self.input_add_cancel_date.setText(f'{self.now.day}.{self.now.month}.{self.now.year}')
 
     def add_cancel_date(self, cancel_date: CancelDate = None, ignore_match=False):
         t = self.input_add_cancel_date.text()
@@ -625,11 +827,17 @@ class TaskForm(QFrame):
 
             yield fr
 
-    def create_ui_task_name(self, layout):
+    def create_ui_task_name(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Название задачи", 30))
 
         self.input_name = simple_line_input("Мои (не)любимые занятия", 20, italic=True)
         layout.addWidget(self.input_name)
+
+    def create_ui_task_desc(self, layout: QVBoxLayout):
+        layout.addWidget(simple_label("Описание задачи", 30))
+
+        self.input_desc = simple_text_input("Необязательное поле", 20, italic=True)
+        layout.addWidget(self.input_desc)
 
     def create_ui_date_selector(self, layout):
         layout.addWidget(simple_label("Выбор времени", 30))
@@ -719,12 +927,12 @@ class TaskForm(QFrame):
 
         now = datetime.now()
         self.input_add_cancel_date = simple_line_input("ДЕНЬ.МЕСЯЦ.ГОД", 20)
-        self.input_add_cancel_date.setText(f'{now.day}.{now.month}.{now.year}')
+        self.set_cancel_now()
 
         add_date_layout = QHBoxLayout()
         add_date_layout.addWidget(icon_button("calendar.svg", 50, 70,
                                               'yellow', icon_color=(0, 0, 0),
-                                              callback=self.add_cancel_date))
+                                              callback=self.set_cancel_now))
         add_date_layout.addWidget(self.input_add_cancel_date)
         add_date_layout.addWidget(icon_button("add.svg", 50, 70, 'green',
                                               callback=self.add_cancel_date))
@@ -734,18 +942,28 @@ class TaskForm(QFrame):
         self.first_tag_btns = []
 
         layout.addWidget(simple_label("Выбор тэгов", 35))
+        layout.addWidget(new_separator(h=4))
         for tag_group, tags in Tags.dict_like().items():
             layout.addSpacing(10)
-            layout.addWidget(simple_label(tag_group.name, 25))
 
             btn_layout = QGridLayout()
             btns = []
             for i, e in enumerate(tags):
+                index = i+1 if len(tags) == 2 else i
                 btn = TagSelectButton(e, btns)
-                btn_layout.addWidget(btn, i // 3, i % 3)
+                btn_layout.addWidget(btn, index // 3, index % 3)
                 btns.append(btn)
                 if i == 0: self.first_tag_btns.append(btn)
-            layout.addLayout(btn_layout)
+
+            if len(tags) == 2:
+                btn_layout.addWidget(simple_label(f'{tag_group.name}:', 25), 0, 0)
+                layout.addLayout(btn_layout)
+                for btn in btns: btn.setFixedWidth(100)
+            else:
+                layout.addWidget(simple_label(tag_group.name, 25))
+                layout.addLayout(btn_layout)
+            layout.addSpacing(10)
+            layout.addWidget(new_separator(h=4))
 
     def create_ui_color_select(self, layout: QVBoxLayout):
         self.color_btn = QPushButton()
@@ -798,6 +1016,7 @@ class TaskForm(QFrame):
 
     def load_task(self, task: ScheduleEvent):
         self.input_name.setText(task.name)
+        self.input_desc.setText(task.desc or "")
 
         for state in task.date.get_states():
             selector = DateSelector(self)
@@ -848,6 +1067,7 @@ class TaskForm(QFrame):
 
         return ScheduleEvent(
             self.input_name.text(), date,
+            description    = self.input_desc.toPlainText() or None,
             times          = self.complete_count,
             anchor_date    = datetime(datetime.now().year, self.anchor_month, self.anchor_day),
             canceled_dates = [cancel_date.date for cancel_date in self.canceled_dates_values],
@@ -927,6 +1147,19 @@ class MainWindow(QMainWindow):
         self.hide_btn.setParent(self)
 
         self.events_list = EventSelector(self)
+        self.create_tray()
+
+    def create_tray(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(recolor_icon("list.svg", QColor(255, 255, 255), 30))
+        self.tray_icon.setVisible(True)
+
+        self.tray_menu = QMenu()
+        self.tray_icon.setContextMenu(self.tray_menu)
+
+        self.tray_menu.addAction(simple_tray_action(self, "Показать", callback=self.show))
+        self.tray_menu.addSeparator()
+        self.tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
 
     def create_ui_calendar(self):
         days_frame = QFrame()
@@ -981,7 +1214,7 @@ class MainWindow(QMainWindow):
 
         self.btn_events_list = self.create_button("list.svg", callback=self.show_events_list)
 
-        button_layout.addWidget(self.create_button("settings_common.svg"))
+        button_layout.addWidget(self.create_button("gear.svg"))
         button_layout.addWidget(self.btn_events_list)
 
         button_layout.addWidget(self.create_button("telescope.svg", callback=self.zoom_button))
@@ -1066,7 +1299,7 @@ class MainWindow(QMainWindow):
                 day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Центрируем текст
                 day_label.setFixedHeight(100)  # Задаем фиксированный размер
 
-                col1 = 'black' if i < 5 else '#990000'
+                col1 = '#990000' if self.time_columns[i].is_free else 'black'
                 day_label.setStyleSheet(
                     f"color: {col1};"
                     f"background-color: transparent;"
@@ -1084,18 +1317,15 @@ class MainWindow(QMainWindow):
             temp_frame.setLayout(temp_layout)
             self.calendar_days_layout.addWidget(temp_frame)
 
-            self.calendar_set_style(i, counter, temp_frame)
+            self.calendar_set_style(i, temp_frame)
 
             counter += timedelta(1)
 
         self.calendar_days_layout.addWidget(new_separator(3, 100))
 
-    def calendar_set_style(self, i, counter, frame: QFrame):
+    def calendar_set_style(self, i, frame: QFrame):
         css = {}
-        have_important = False
-        for event in self.scheduled_events:
-            if event.get_timestamps(counter) and event.tags.have(Tags.IMPORTANT.YES):
-                have_important = True
+        have_important = self.time_columns[i].is_important
 
         if i == datetime.now().weekday() and self.week_offset == 0:
             css = {'background-color': '#440000ff', 'border-top': '7px solid #440000ff'}
@@ -1125,9 +1355,6 @@ class MainWindow(QMainWindow):
         self.views_height = max(1000, min(3000, self.views_height + offset))
         self.update_schedule_view()
 
-    def call_test_feature(self):
-        print(tuple(self.task_form.get_all_date_selectors())[0].time_selector.min_value)
-
     def create_task_add_form(self, to_edit=None):
         if self.task_form: self.task_form.close()
         self.task_form = TaskForm(self, to_edit)
@@ -1145,6 +1372,11 @@ class MainWindow(QMainWindow):
         self.update_schedule_view()
 
         self.cfg.save(events=self.scheduled_events)
+
+    def get_scheduled_events_and_time(self):
+        for time_column in self.time_columns:
+            for view in time_column.views:
+                yield view.get_event_and_time()
 
     def toggle_toolbar(self):
         if self.settings_frame.isVisible():
@@ -1188,9 +1420,9 @@ class MainWindow(QMainWindow):
         self.events_list_update_pos()
 
     def update_schedule_view(self):
-        self.update_calendar()
         for column in self.time_columns:
             column.update_views()
+        self.update_calendar()
 
     def events_list_update_pos(self):
         if self.events_list.isHidden(): return
@@ -1209,6 +1441,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, a0):
         self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(), view_scale=self.views_height)
+        self.hide()
+        a0.ignore()
 
     def keyPressEvent(self, a0):
         t = a0.text().lower()
@@ -1224,7 +1458,12 @@ class MainWindow(QMainWindow):
         if t in 'eу': self.toggle_toolbar()
 
 
-app = QApplication(sys.argv)
-window = MainWindow()
-window.show()
-sys.exit(app.exec())
+try:
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+except:
+    print("Возникла ошибка, лог создан")
+    log_error()
+    raise

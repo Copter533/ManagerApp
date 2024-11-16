@@ -1,3 +1,4 @@
 /schedule.json
 /.venv/
 .idea/
+/error_logs/
