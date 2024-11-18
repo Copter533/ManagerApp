@@ -43,7 +43,7 @@ class ScheduleEventView(QFrame):
         self.bgr_renderer = None
         if event.tags.have(Tags.WHERE.CRON):  self.set_background_icon("cron.svg")
         if event.tags.have(Tags.WHERE.LOMO):  self.set_background_icon("lomo.svg")
-        if event.tags.have(Tags.WHERE.SPORT): self.set_background_icon("sword.svg", 1.5, 110, 70)
+        if event.tags.have(Tags.WHERE.SPORT): self.set_background_icon("sword.svg")
         if event.tags.have(Tags.WHERE.NOV):   self.set_background_icon("home.svg")
 
         self.layout = QVBoxLayout()
@@ -79,7 +79,7 @@ class ScheduleEventView(QFrame):
         self._highlight_color = (r, g, b)
         self._highlight_speed = speed
 
-    def set_background_icon(self, path, scale=1.2, offset_x=80, offset_y=90):
+    def set_background_icon(self, path, scale=1.2, offset_x=60, offset_y=70):
         self.bgr_renderer = QSvgRenderer(f"icons/{path}")
         svg_size = self.bgr_renderer.defaultSize()
         self.bgr_icon_width  = int(svg_size.width()  * scale)
@@ -175,8 +175,8 @@ class ScheduleEventView(QFrame):
 
     def create_ui_title(self):
         lb = QLabel()
-        lb.setText(f'<div style="line-height: 0.8;">{self.name}</div>')
-        lb.setFont(QFont(self.app.font_skolar, 25))
+        lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>')
+        lb.setFont(QFont(self.app.font_skolar, 20))
         lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lb.setWordWrap(True)
         lb.setStyleSheet("""
@@ -189,7 +189,7 @@ class ScheduleEventView(QFrame):
     def create_ui_time(self):
         self.time_texts = MultiDate.time_stamp_to_str([self.stime, self.etime]).split('-')
         self.time_label = QLabel(" - ".join(self.time_texts))
-        self.time_label.setFont(QFont(self.app.font_skolar, 20))
+        self.time_label.setFont(QFont(self.app.font_skolar, 16))
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.time_label.setStyleSheet("""
             background: transparent;
@@ -232,7 +232,7 @@ class ScheduleEventView(QFrame):
         painter = QPainter(self)
         painter.setOpacity(0.3 if self.is_today() else 0.1)
 
-        border_width = 20
+        border_width = 10
         painter.setClipRect(QRect(
             border_width // 2,
             border_width // 2,
@@ -545,6 +545,7 @@ class TimeColumnView(QFrame):
 
         time_diff = min_time - time_needed
         if time_diff >= 0:
+            if time_diff > 4 * 60: return
             message = str_time(time_diff, leading_zero=True)
 
             time_diff = 24 * 60 - 10
@@ -925,7 +926,6 @@ class TaskForm(QFrame):
         layout.setContentsMargins(10, 0, 10, 10)
         layout.addLayout(self.canceled_dates_layout)
 
-        now = datetime.now()
         self.input_add_cancel_date = simple_line_input("ДЕНЬ.МЕСЯЦ.ГОД", 20)
         self.set_cancel_now()
 
@@ -1161,22 +1161,24 @@ class MainWindow(QMainWindow):
         self.tray_menu.addSeparator()
         self.tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
 
+    def have_tray(self):
+        return not self.tray_icon.icon().isNull()
+
     def create_ui_calendar(self):
-        days_frame = QFrame()
-        days_frame.setFixedHeight(120)
-        days_frame.setStyleSheet("background-color: #E0E0E0; border-bottom: 2px solid black")
+        self.days_frame = QFrame()
+        self.days_frame.setFixedHeight(120)
 
         self.calendar_days_layout = QHBoxLayout()
         self.calendar_days_layout.setContentsMargins(10, 0, 10, 0)
         self.calendar_days_layout.setSpacing(0)
 
-        days_frame.setLayout(self.calendar_days_layout)
+        self.days_frame.setLayout(self.calendar_days_layout)
 
-        self.main_layout.addWidget(days_frame)
+        self.main_layout.addWidget(self.days_frame)
 
     def create_ui_schedule_view(self):
-        container_widget = QWidget()
-        layout = QHBoxLayout(container_widget)
+        self.schedule_view = QWidget()
+        layout = QHBoxLayout(self.schedule_view)
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(0)
 
@@ -1191,10 +1193,10 @@ class MainWindow(QMainWindow):
 
         self.update_schedule_view()
 
-        container_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.schedule_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.schedule_scroll = QScrollArea()
-        self.schedule_scroll.setWidget(container_widget)
+        self.schedule_scroll.setWidget(self.schedule_view)
         self.schedule_scroll.setWidgetResizable(True)
         self.schedule_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.schedule_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1225,6 +1227,9 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.create_button("right.svg", callback=self.next_week))
 
         button_layout.addStretch()
+
+        button_layout.addWidget(self.create_button("photo.svg", callback=self.make_screenshot))
+        button_layout.addSpacing(80)
 
         self.settings_frame.setLayout(button_layout)
         self.main_layout.addWidget(self.settings_frame)
@@ -1296,10 +1301,10 @@ class MainWindow(QMainWindow):
             dayM_label.setMinimumWidth(120)
 
             for day_label in (dayM_label, dayW_label):
-                day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Центрируем текст
-                day_label.setFixedHeight(100)  # Задаем фиксированный размер
+                day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                day_label.setFixedHeight(100)
 
-                col1 = '#990000' if self.time_columns[i].is_free else 'black'
+                col1 = '#990000' if self.time_columns[i].is_free and i >= 5 else 'black'
                 day_label.setStyleSheet(
                     f"color: {col1};"
                     f"background-color: transparent;"
@@ -1309,6 +1314,7 @@ class MainWindow(QMainWindow):
             self.calendar_days_layout.addWidget(new_separator(3, 100))
 
             temp_frame = QFrame()
+            temp_frame.setMinimumSize(0, 0)
             temp_layout = QVBoxLayout()
             temp_layout.addWidget(dayW_label)
             temp_layout.addWidget(dayM_label)
@@ -1324,7 +1330,7 @@ class MainWindow(QMainWindow):
         self.calendar_days_layout.addWidget(new_separator(3, 100))
 
     def calendar_set_style(self, i, frame: QFrame):
-        css = {}
+        css = {'border-top': '7px solid #44333333'}
         have_important = self.time_columns[i].is_important
 
         if i == datetime.now().weekday() and self.week_offset == 0:
@@ -1432,6 +1438,17 @@ class MainWindow(QMainWindow):
             - (self.settings_frame.height() if self.settings_frame.isVisible() else 0)
         )
 
+    def make_screenshot(self):
+        screenshot = self.schedule_view.grab()
+        clipboard = QApplication.clipboard()
+        clipboard.setPixmap(screenshot)
+        self.tray_icon.showMessage(
+                "Задачи сохранены в буфер как картинка",
+                f"{self.time_columns[0].now.day} - {self.time_columns[-1].now.day} числа",
+                QIcon(screenshot.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio)),
+                5000
+            )
+
     def resizeEvent(self, a0):
         self.hide_btn.move(
             self.width()  - self.hide_btn.width()  - 10,
@@ -1440,9 +1457,11 @@ class MainWindow(QMainWindow):
         self.events_list_update_pos()
 
     def closeEvent(self, a0):
-        self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(), view_scale=self.views_height)
-        self.hide()
-        a0.ignore()
+        self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(),
+                      view_scale=self.views_height)
+        if self.have_tray():
+            self.hide()
+            a0.ignore()
 
     def keyPressEvent(self, a0):
         t = a0.text().lower()
@@ -1463,6 +1482,7 @@ try:
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+except SystemExit: print("Системный выход")
 except:
     print("Возникла ошибка, лог создан")
     log_error()

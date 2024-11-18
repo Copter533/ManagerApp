@@ -296,6 +296,11 @@ class ScheduleEvent:
 
     def can_occur(self, check_date: date | datetime):
         if isinstance(check_date, datetime): check_date = check_date.date()
+
+        if self.tags.have(Tags.LABOR.LESSON) and\
+            date(check_date.year, 6, 1) <= check_date <= date(check_date.year, 9, 30):
+            return False
+
         if check_date in self.canceled_dates: return False
         if self.times == 0: return True
         times = self.times
@@ -305,6 +310,7 @@ class ScheduleEvent:
             if self.get_timestamps(iterator):
                 if (self.times == 0 or times > 0) and iterator == check_date: return True
                 times -= 1
+
         return False
 
     def can_block(self, other):
@@ -328,6 +334,7 @@ class Config:
     def __init__(self, obj: dict, file, events):
         self.file   = file
         self.events = events
+
         self.y_view     = obj.get('y_view',   ) or 0
         self.view_scale = obj.get('view_scale') or 2600
 
@@ -353,10 +360,11 @@ class Config:
 
             return cls({}, file, [])
 
-    def save(self, events=None, y_view=None, view_scale=None, pretty=False):
-        if events:     self.events     = events
-        if y_view:     self.y_view     = y_view
-        if view_scale: self.view_scale = view_scale
+    def save(self, events=None, y_view=None, view_scale=None, theme=None,
+             pretty=False):
+        if events:       self.events       = events
+        if y_view:       self.y_view       = y_view
+        if view_scale:   self.view_scale   = view_scale
 
         data = {
             'events': [],
