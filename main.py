@@ -1,10 +1,12 @@
 import calendar
+import os
 import sys
+import traceback
 from datetime import datetime, timedelta, date
 from math import atan2, sin, cos, radians
 from random import randint
 
-from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QTime, QRectF, QRect
+from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRectF, QRect
 from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
@@ -12,7 +14,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFr
 
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
-    EventSelector, simple_text_input, simple_tray_action, recolor_icon
+    EventSelector, simple_text_input, simple_tray_action, recolor_icon, SpoilerOptions
 from tags import Tags, TagList
 from utils import months, days_of_week, ScheduleEvent, MultiDate, interpolate, rgb_to_hex, Config, str_time, log_error
 
@@ -24,7 +26,10 @@ class ScheduleEventView(QFrame):
         app: MainWindow
         parent: TimeColumnView
 
-        self.app = app
+        self.announce_time = 60 # в минутах
+        self.was_announced = False
+
+        self.app: MainWindow = app
         self.now: date = parent.now
         self.stime = stamp[0]
         self.etime = stamp[1]
@@ -152,7 +157,7 @@ class ScheduleEventView(QFrame):
         return self._event.tags
 
     def is_today(self):
-        return self.now == datetime.now().date()
+        return self.now == self.app.get_now().date()
 
     def get_event_and_time(self):
         return self._event, self.stime, self.etime
@@ -161,7 +166,7 @@ class ScheduleEventView(QFrame):
         if self._event.times == 0: return False
         if self.expired: return True
 
-        now = datetime.now()
+        now = self.app.get_now()
         stamp_now = now.hour * 60 + now.minute
         if self.now < now.date(): return True
 
@@ -172,6 +177,12 @@ class ScheduleEventView(QFrame):
             if stamp[1] > stamp_now:
                 return False
         return True
+
+    def check_announce(self):
+        if self.announce_time <= 0: return False
+
+    def do_announce(self):
+        pass
 
     def create_ui_title(self):
         lb = QLabel()
@@ -344,10 +355,10 @@ class TimeColumnView(QFrame):
         self.timer = QTimer(self)
         # noinspection PyUnresolvedReferences
         self.timer.timeout.connect(self.update)
-        self.timer.start(1_000)  # 1 000 мс = 1 секунда
+        self.timer.start(1 if self.app.mock_time else 1_000)
 
     def is_today(self):
-        return self.app.week_offset == 0 and self.i == datetime.now().weekday()
+        return self.app.week_offset == 0 and self.i == self.app.get_now().weekday()
 
     def set_view_height(self, v: int):
         self.setFixedHeight(v)
@@ -613,19 +624,17 @@ class TimeColumnView(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        current_time = QTime.currentTime()
-        current_hour = current_time.hour()
-        current_minute = current_time.minute()
+        now = self.app.get_now()
 
         alpha = 50
-        if   current_hour < self.min_hour: y = self.margin // 4
-        elif current_hour > self.max_hour: y = self.height() - self.margin // 4
+        if   now.hour < self.min_hour: y = self.margin // 4
+        elif now.hour > self.max_hour: y = self.height() - self.margin // 4
         else:
-            hours_from_start = current_hour - self.min_hour + current_minute / 60
+            hours_from_start = now.hour - self.min_hour + now.minute / 60
             y = int(hours_from_start * self.per_hour) + self.margin
             alpha = 255
 
-        x1 = self.width() * (datetime.now().weekday() - self.i)
+        x1 = self.width() * (self.app.get_now().weekday() - self.i)
         x2 = x1 + self.width()
 
         painter.setPen(QPen(QColor(255, 0, 0, alpha), 3))
@@ -645,7 +654,9 @@ class TaskForm(QFrame):
 
         w, h = 0.4, 0.8
 
-        self.now = when or datetime.now()
+        self.main_window: MainWindow = main_window
+
+        self.now = when or self.main_window.get_now()
         self.edit_target = None if to_edit is None else to_edit.name
 
         size = app.primaryScreen().size()
@@ -660,19 +671,28 @@ class TaskForm(QFrame):
         """)
         self.clicks = 0
 
-        self.main_window: MainWindow = main_window
         self.main_layout = QVBoxLayout()
-        for widget in self.framed_ui(
-            [QVBoxLayout, self.create_ui_task_name],
-            [QVBoxLayout, self.create_ui_task_desc],
-            [QVBoxLayout, self.create_ui_date_selector],
-            [QHBoxLayout, self.create_ui_complete_count],
-            [QHBoxLayout, self.create_ui_anchor_date],
-            [QVBoxLayout, self.create_ui_canceled_dates],
-            [QVBoxLayout, self.create_ui_tag_select],
-            [QVBoxLayout, self.create_ui_color_select],
-            [QVBoxLayout, self.create_ui_finish_buttons]
-        ):
+        for widget in self.framed_ui({
+            'Имя и описание': [
+                [QVBoxLayout, self.create_ui_task_name],
+                [QVBoxLayout, self.create_ui_task_desc]
+            ],
+            'Настройка времени': [
+                [QVBoxLayout, self.create_ui_date_selector],
+                [QHBoxLayout, self.create_ui_anchor_date]
+            ],
+            'Выполнение и отмена': [
+                [QHBoxLayout, self.create_ui_complete_count],
+                [QVBoxLayout, self.create_ui_canceled_dates]
+            ],
+            'Прочее': [
+                [QVBoxLayout, self.create_ui_tag_select],
+                [QVBoxLayout, self.create_ui_color_select]
+            ],
+            '-': [
+                [QVBoxLayout, self.create_ui_finish_buttons]
+            ]
+        }):
             self.main_layout.addWidget(widget)
         self.main_layout.addStretch(0)
 
@@ -702,16 +722,23 @@ class TaskForm(QFrame):
 
     def add_date_option(self, option=None):
         self.date_list_layout.addWidget(option or DateSelector(self))
+        self.update_date_options()
 
-        for i, e in enumerate(self.get_all_date_selectors(), start=1):
-            e.title.setText(f'Условие #{i}')
+    def update_date_options(self):
+        all_selectors = tuple(self.get_all_date_selectors())
+        if all_selectors:
+            self.date_scroll_area.setMinimumHeight(555)
+            for i, e in enumerate(all_selectors):
+                e.set_index(i)
+        else:
+            self.date_scroll_area.setMinimumHeight(200)
 
     def get_all_date_selectors(self):
         for i in range(self.date_list_layout.count()):
             item = self.date_list_layout.itemAt(i)
             if item is None: continue
             w = item.widget()
-            if isinstance(w, DateSelector): yield w
+            if isinstance(w, DateSelector) and not w.deleted: yield w
 
     def update_complete_count(self, new_count):
         if new_count < 0: new_count = 0
@@ -721,7 +748,7 @@ class TaskForm(QFrame):
         set_color_scheme(self.btn_complete_remove, 'gray' if new_count == 0 else 'red')
 
     def update_anchor_day(self, new_day, clamp_top=False):
-        month_days = calendar.monthrange(datetime.now().year, self.anchor_month)[1]
+        month_days = calendar.monthrange(self.main_window.get_now().year, self.anchor_month)[1]
         if clamp_top: new_day = min(new_day, month_days)
         if new_day <= 0: new_day += month_days
         new_day = (new_day - 1) % month_days + 1
@@ -808,25 +835,38 @@ class TaskForm(QFrame):
             }}
         """)
 
-    def framed_ui(self, *options):
-        for i, (layout_type, ui_creator) in enumerate(options):
-            fr = QFrame()
-            style = f"""
-                background-color: {"#f4f4f4" if i % 2 else "#f9f9f9"};
-            """
-            radius = 5
-            if i == 0:
-                style += f"border-top-left-radius:    {radius}px; border-top-right-radius:    {radius}px; "
-            if i == len(options)-1:
-                style += f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; "
+    def framed_ui(self, structure: dict):
+        for j, (spoiler_name, spoiler_options) in enumerate(structure.items()):
+            widgets = []
+            have_spoiler = not spoiler_name.startswith('-')
+            if have_spoiler:
+                spoiler = SpoilerOptions(spoiler_name)
+                yield spoiler
 
-            fr.setStyleSheet(style)
-            layout: QHBoxLayout = layout_type()
-            ui_creator(layout)
-            layout.addStretch(0)
-            fr.setLayout(layout)
+            for i, (layout_type, ui_creator) in enumerate(spoiler_options):
+                fr = QFrame()
+                style = f"""
+                    background-color: {"#f4f4f4" if i % 2 else "#f9f9f9"};
+                """
+                radius = 5
+                if i == 0:
+                    style += f"border-top-left-radius:    {radius}px; border-top-right-radius:    {radius}px; "
+                if i == len(spoiler_options)-1:
+                    style += f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; "
 
-            yield fr
+                fr.setStyleSheet(style)
+                layout: QHBoxLayout = layout_type()
+                ui_creator(layout)
+                layout.addStretch(0)
+                fr.setLayout(layout)
+
+                widgets.append(fr)
+                yield fr
+
+            if have_spoiler:
+                # noinspection PyUnboundLocalVariable
+                spoiler.setWidgets(widgets)
+                if j != 0: spoiler.hide_all()
 
     def create_ui_task_name(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Название задачи", 30))
@@ -847,7 +887,6 @@ class TaskForm(QFrame):
         self.date_scroll_area.setWidgetResizable(True)
         self.date_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.date_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.date_scroll_area.setMinimumHeight(500)
 
         self.date_list_layout = QVBoxLayout()
         self.date_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -858,11 +897,13 @@ class TaskForm(QFrame):
         self.date_list_widget.setLayout(self.date_list_layout)
         self.date_list_widget.setObjectName("dateSelectorBorder")
         self.date_list_widget.setStyleSheet(
-            "#dateSelectorBorder { border: 4px solid black; } background: #e0e0e0;"
+            "#dateSelectorBorder { border: 4px solid black; }"
         )
 
         self.date_scroll_area.setWidget(self.date_list_widget)
         layout.addWidget(self.date_scroll_area)
+
+        self.update_date_options()
 
         layout.addWidget(
             icon_button("add.svg", 50, 70, 'green', callback=self.add_date_option))
@@ -887,11 +928,17 @@ class TaskForm(QFrame):
         self.lb_anchor_day   = simple_label("?", 25, fixed_width=35)
         self.lb_anchor_month = simple_label("?", 25, fixed_width=130)
 
-        self.update_anchor_month(datetime.now().month, datetime.now().day)
+        self.update_anchor_month(
+            self.main_window.get_now().month,
+            self.main_window.get_now().day
+        )
 
         layout.addWidget(icon_button(
             "calendar.svg", 50, 70, 'yellow',
-            callback=lambda: self.update_anchor_month(datetime.now().month, datetime.now().day),
+            callback=lambda: self.update_anchor_month(
+                self.main_window.get_now().month,
+                self.main_window.get_now().day
+            ),
             icon_color=(0, 0, 0)
         ))
         layout.addStretch(1)
@@ -1026,8 +1073,8 @@ class TaskForm(QFrame):
             selector.setup_values(state.get('dayW'), state.get('dayM'), state.get('mon'))
             selector.set_parity(state.get('parity'))
 
-            selector.time_selector.set_min(state['time'][0] // 10)
-            selector.time_selector.set_max(state['time'][1] // 10)
+            selector.time_selector.set_min(state['time'][0])
+            selector.time_selector.set_max(state['time'][1])
 
             self.add_date_option(selector)
 
@@ -1069,7 +1116,7 @@ class TaskForm(QFrame):
             self.input_name.text(), date,
             description    = self.input_desc.toPlainText() or None,
             times          = self.complete_count,
-            anchor_date    = datetime(datetime.now().year, self.anchor_month, self.anchor_day),
+            anchor_date    = datetime(self.main_window.get_now().year, self.anchor_month, self.anchor_day),
             canceled_dates = [cancel_date.date for cancel_date in self.canceled_dates_values],
             tags           = self.get_tags(),
             color          = [color[0], color[1], color[2]]
@@ -1111,9 +1158,12 @@ class TaskForm(QFrame):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, no_tray=False):
         super().__init__()
         self.cfg = Config.load()
+
+        self.start_date = datetime.now()
+        self.mock_time = True
 
         self.setWindowTitle("Приложение")
         self.setGeometry(100, 100, 1000, 600)
@@ -1147,25 +1197,37 @@ class MainWindow(QMainWindow):
         self.hide_btn.setParent(self)
 
         self.events_list = EventSelector(self)
-        self.create_tray()
+        self.create_tray(no_tray)
 
-    def create_tray(self):
+    def get_now(self):
+        if not self.mock_time: return datetime.now()
+
+        n = datetime.now()
+        return datetime(n.year, n.month, n.day, 8) + (datetime.now() - self.start_date) * 1000
+
+    def create_tray(self, no_tray):
         self.tray_icon = QSystemTrayIcon(self)
+        if no_tray: return
         self.tray_icon.setIcon(recolor_icon("list.svg", QColor(255, 255, 255), 30))
         self.tray_icon.setVisible(True)
 
-        self.tray_menu = QMenu()
-        self.tray_icon.setContextMenu(self.tray_menu)
+        # noinspection PyUnresolvedReferences
+        self.tray_icon.activated.connect(self.show)
 
-        self.tray_menu.addAction(simple_tray_action(self, "Показать", callback=self.show))
-        self.tray_menu.addSeparator()
-        self.tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
+        tray_menu = QMenu()
+
+        tray_menu.addAction(simple_tray_action(self, "Открыть", callback=self.show))
+        tray_menu.addSeparator()
+        tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
+
+        self.tray_icon.setContextMenu(tray_menu)
 
     def have_tray(self):
         return not self.tray_icon.icon().isNull()
 
     def create_ui_calendar(self):
         self.days_frame = QFrame()
+        self.days_frame.setStyleSheet("background-color: #E0E0E0; border-bottom: 2px solid black")
         self.days_frame.setFixedHeight(120)
 
         self.calendar_days_layout = QHBoxLayout()
@@ -1182,7 +1244,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(0)
 
-        now = datetime.now().date()
+        now = self.get_now().date()
         counter = now - timedelta(now.weekday() + self.week_offset * 7)
 
         for i in range(7):
@@ -1229,7 +1291,7 @@ class MainWindow(QMainWindow):
         button_layout.addStretch()
 
         button_layout.addWidget(self.create_button("photo.svg", callback=self.make_screenshot))
-        button_layout.addSpacing(80)
+        button_layout.addSpacing(85)
 
         self.settings_frame.setLayout(button_layout)
         self.main_layout.addWidget(self.settings_frame)
@@ -1285,7 +1347,7 @@ class MainWindow(QMainWindow):
             w = self.calendar_days_layout.itemAt(i)
             w.widget().deleteLater()
 
-        now = datetime.now() + timedelta(self.week_offset * 7)
+        now = self.get_now() + timedelta(self.week_offset * 7)
         counter = now - timedelta(now.weekday())
         self.calendar_labels: list[list[QFrame | QLabel | QLabel]] = []
 
@@ -1330,10 +1392,10 @@ class MainWindow(QMainWindow):
         self.calendar_days_layout.addWidget(new_separator(3, 100))
 
     def calendar_set_style(self, i, frame: QFrame):
-        css = {'border-top': '7px solid #44333333'}
+        css = {'border-top': '7px solid #22333333'}
         have_important = self.time_columns[i].is_important
 
-        if i == datetime.now().weekday() and self.week_offset == 0:
+        if i == self.get_now().weekday() and self.week_offset == 0:
             css = {'background-color': '#440000ff', 'border-top': '7px solid #440000ff'}
             if have_important:
                 css = {'background-color': '#44ff0000', 'border-top': '10px solid #44ff0000'}
@@ -1464,26 +1526,36 @@ class MainWindow(QMainWindow):
             a0.ignore()
 
     def keyPressEvent(self, a0):
-        t = a0.text().lower()
-        if not t: return
+        k = a0.nativeVirtualKey()
 
-        if t in 'dв': self.next_week()
-        if t in 'aф': self.prev_week()
+        if k in Qt.Key.Key_A: self.prev_week()
+        if k in Qt.Key.Key_D: self.next_week()
 
-        if t in 'wц': self.update_zoom(-200)
-        if t in 'sы': self.update_zoom(+200)
+        if k == Qt.Key.Key_W: self.update_zoom(-200)
+        if k == Qt.Key.Key_S: self.update_zoom(+200)
 
-        if t in 'qй': self.show_events_list()
-        if t in 'eу': self.toggle_toolbar()
+        if k == Qt.Key.Key_Q: self.show_events_list()
+        if k == Qt.Key.Key_E: self.toggle_toolbar()
 
 
 try:
+    if os.getcwd().endswith("output"): os.chdir("..")
     app = QApplication(sys.argv)
-    window = MainWindow()
+    window = MainWindow(no_tray="no_tray" in sys.argv)
     window.show()
     sys.exit(app.exec())
-except SystemExit: print("Системный выход")
+except (SystemExit, KeyboardInterrupt): print("Системный выход")
 except:
+    exc_type, exc_value, exc_traceback = sys.exc_info()
     print("Возникла ошибка, лог создан")
-    log_error()
+    try:
+        log_error()
+    except:
+        print("!!!CANNOT CREATE ERROR LOG!!!\n")
+        print("TYPE  -", exc_type)
+        print("VALUE -", exc_value)
+        print("\n\n")
+        traceback.print_tb(exc_traceback)
+        print("\n\n\n")
+        os.system("pause")
     raise

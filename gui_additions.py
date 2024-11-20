@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt, QSize, QRect, QPoint
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication
 )
 
 from tags import Tags, Tag
@@ -209,6 +209,61 @@ def ui_shadow(element):
     element.setGraphicsEffect(shadow_effect)
 
 
+class SpoilerOptions(QPushButton):
+    def __init__(self, name: str, widgets: list[QWidget] = None, collapsed=True):
+        super().__init__(name)
+
+        self.shown = True
+        self.widgets = widgets if widgets else []
+
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setFixedHeight(50)
+        self.setStyleSheet("""
+            QPushButton {
+                font-size: 20px;
+                font-style: italic;
+                color: white;
+                background-color: #111;
+                border: 1px solid #333;
+                padding: 10px 20px;
+                border-radius: 5px; /* добавим немного округления углов */
+            }
+
+            QPushButton:hover {
+                background-color: #222;
+                color: #fff;
+            }
+
+            QPushButton:pressed {
+                background-color: #444;
+                color: #fff;
+            }
+        """)
+
+        # noinspection PyUnresolvedReferences
+        self.clicked.connect(self.on_click)
+        if collapsed: self.hide_all()
+
+    def setWidgets(self, widgets):
+        self.widgets = widgets
+
+    def on_click(self):
+        if self.shown:
+            self.hide_all()
+        else:
+            self.show_all()
+
+    def hide_all(self):
+        self.shown = False
+
+        for widget in self.widgets: widget.hide()
+
+    def show_all(self):
+        self.shown = True
+
+        for widget in self.widgets: widget.show()
+
+
 class ColorSelectSlider(QSlider):
     def __init__(self, min_, max_, callback):
         super().__init__(Qt.Orientation.Horizontal)
@@ -370,10 +425,13 @@ class TagSelectButton(QPushButton):
 class TimeSelector(QWidget):
     def __init__(self, min_value=0, max_value=24):
         super().__init__()
-        self.min_value = min_value * 6
-        self.max_value = max_value * 6
-        self.current_min = self.min_value
-        self.current_max = self.max_value
+        self.min_value = min_value * 60
+        self.max_value = max_value * 60
+        self.min_limit = self.min_value
+        self.max_limit = self.max_value
+
+        self._step_max = 10
+        self._step_min = 1
 
         self.slider_height = 20
         self.handle_radius = 16
@@ -383,15 +441,21 @@ class TimeSelector(QWidget):
         self.setFixedHeight(70)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Устанавливаем фокус для обработки клавиш
 
-    def set_min(self, new_min): self.current_min = max(self.min_value, new_min)
-    def set_max(self, new_max): self.current_max = min(self.max_value, new_max)
+    def set_min(self, new_min): self.min_value = max(self.min_limit, new_min)
+    def set_max(self, new_max): self.max_value = min(self.max_limit, new_max)
+
+    def get_step(self):
+        return \
+            (self._step_min
+                if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier else
+            self._step_max)
 
     @staticmethod
     def get_timestr(value, leading_zero=True):
-        return str_time(value * 10, leading_zero=leading_zero)
+        return str_time(value, leading_zero=leading_zero)
 
     def get_timedur(self):
-        return f'{self.get_timestr(self.current_min)}-{self.get_timestr(self.current_max)}'
+        return f'{self.get_timestr(self.min_value)}-{self.get_timestr(self.max_value)}'
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -399,8 +463,8 @@ class TimeSelector(QWidget):
 
         self.paint_background(painter)
         self.paint_between(painter)
-        self.paint_marker('min', painter, QColor(50, 100, 200), self.value_to_position(self.current_min))
-        self.paint_marker('max', painter, QColor(200, 50,  50), self.value_to_position(self.current_max))
+        self.paint_marker('min', painter, QColor(50, 100, 200), self.value_to_position(self.min_value))
+        self.paint_marker('max', painter, QColor(200, 50,  50), self.value_to_position(self.max_value))
         self.paint_duration(painter)
 
     def paint_background(self, painter):
@@ -416,8 +480,8 @@ class TimeSelector(QWidget):
         painter.drawRect(track_rect)
 
     def paint_between(self, painter: QPainter):
-        x1 = self.value_to_position(self.current_min)
-        x2 = self.value_to_position(self.current_max)
+        x1 = self.value_to_position(self.min_value)
+        x2 = self.value_to_position(self.max_value)
         y  = (self.height() - self.slider_height) // 2
         offset = 8
         painter.setPen(QPen(QColor(255, 255, 255), 8))
@@ -427,7 +491,7 @@ class TimeSelector(QWidget):
         ))
 
     def paint_duration(self, painter: QPainter):
-        x = (self.value_to_position(self.current_min) + self.value_to_position(self.current_max)) // 2
+        x = (self.value_to_position(self.min_value) + self.value_to_position(self.max_value)) // 2
 
         painter.setPen(QColor(0, 0, 0))
         f = painter.font()
@@ -435,7 +499,7 @@ class TimeSelector(QWidget):
         f.setBold(True)
         painter.setFont(f)
 
-        painter.drawText(x - 14, self.height() // 2 + 5, self.get_timestr(self.current_max - self.current_min, False))
+        painter.drawText(x - 14, self.height() // 2 + 5, self.get_timestr(self.max_value - self.min_value, False))
 
     def paint_marker(self, type_, painter: QPainter, color, x):
         y = self.height() // 2
@@ -448,8 +512,8 @@ class TimeSelector(QWidget):
         f.setPointSize(15)
         f.setBold(True)
         painter.setFont(f)
-        if type_ == 'min': painter.drawText(x-11, y-20, self.get_timestr(self.current_min))
-        if type_ == 'max': painter.drawText(x-40, y+35, self.get_timestr(self.current_max))
+        if type_ == 'min': painter.drawText(x - 11, y - 20, self.get_timestr(self.min_value))
+        if type_ == 'max': painter.drawText(x - 40, y + 35, self.get_timestr(self.max_value))
 
         painter.setPen(QPen(QColor.fromHsv(color.hue(), color.saturation(), color.value()-40), dx))
         painter.drawPolygon([QPoint(x, y+dx), QPoint(x+dx, y+dx*2), QPoint(x-dx, y+dx*2)])
@@ -459,20 +523,24 @@ class TimeSelector(QWidget):
 
     def mousePressEvent(self, event):
         # Проверка попадания в маркеры
-        if self.handle_hit(event.pos(), self.current_min):
-            self.active_handle = 'min'
-            self.last_active_handle = 'min'
-        elif self.handle_hit(event.pos(), self.current_max):
-            self.active_handle = 'max'
-            self.last_active_handle = 'max'
+        closet = min((
+            ('min', self.handle_dist(event.pos(), self.min_value)),
+            ('max', self.handle_dist(event.pos(), self.max_value))
+        ), key=lambda x: x[1])
+        if closet[1] > self.handle_radius: return
+
+        print(closet[0])
+        self.active_handle      = closet[0]
+        self.last_active_handle = closet[0]
 
     def mouseMoveEvent(self, event):
+        print(self.get_step())
         if self.active_handle is None: return
-        value = self.position_to_value(event.position().x())
+        value = round(self.position_to_value(event.position().x()) / self.get_step()) * self.get_step()
         if self.active_handle == 'min':
-            self.current_min = min(max(self.min_value, value), self.current_max - 1)
+            self.min_value = min(max(self.min_limit, value), self.max_value)
         elif self.active_handle == 'max':
-            self.current_max = max(min(self.max_value, value), self.current_min + 1)
+            self.max_value = max(min(self.max_limit, value), self.min_value)
 
         self.update()
 
@@ -481,39 +549,38 @@ class TimeSelector(QWidget):
 
     def keyPressEvent(self, event):
         if not self.last_active_handle: return
-        step = 1  # Шаг изменения значения
         if event.key() == Qt.Key.Key_Left:
-            if self.last_active_handle == 'min' and self.current_min > self.min_value:
-                self.current_min -= step
-            if self.last_active_handle == 'max' and self.current_max > self.current_min + 1:
-                self.current_max -= step
+            if self.last_active_handle == 'min' and self.min_value > self.min_limit:
+                self.min_value = max(self.min_limit, min(self.max_limit, self.min_value - self.get_step()))
+            if self.last_active_handle == 'max' and self.max_value > self.min_value + self.get_step():
+                self.max_value = max(self.min_limit, min(self.max_limit, self.max_value - self.get_step()))
         elif event.key() == Qt.Key.Key_Right:
-            if self.last_active_handle == 'min' and self.current_min < self.current_max - 1:
-                self.current_min += step
-            if self.last_active_handle == 'max' and self.current_max < self.max_value:
-                self.current_max += step
+            if self.last_active_handle == 'min' and self.min_value < self.max_value - self.get_step():
+                self.min_value = max(self.min_limit, min(self.max_limit, self.min_value + self.get_step()))
+            if self.last_active_handle == 'max' and self.max_value < self.max_limit:
+                self.max_value = max(self.min_limit, min(self.max_limit, self.max_value + self.get_step()))
 
         self.update()
 
-    def handle_hit(self, pos, value):
+    def handle_dist(self, pos, value):
         handle_pos = QPoint(self.value_to_position(value), self.height() // 2)
-        return (pos - handle_pos).manhattanLength() <= self.handle_radius * 2
+        return (pos - handle_pos).manhattanLength()
 
     def value_to_position(self, value):
-        return int((value - self.min_value) / (self.max_value - self.min_value) * (
+        return int((value - self.min_limit) / (self.max_limit - self.min_limit) * (
                     self.width() - 2 * self.handle_radius) + self.handle_radius)
 
     def position_to_value(self, x):
         return int((x - self.handle_radius) / (self.width() - 2 * self.handle_radius) * (
-                    self.max_value - self.min_value) + self.min_value)
+                self.max_limit - self.min_limit) + self.min_limit)
 
 
 class DateSelector(QFrame):
-    def __init__(self, parent, i=0, *args, **kwargs):
+    def __init__(self, parent, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setParent(parent)
         self.parent = parent
-        self.setStyleSheet(f'background-color: {"#d4d4d4" if i % 2 else "#d9d9d9"};')
+        self.setObjectName("dateSelectorFrame")
         self.setMinimumHeight(550)
 
         self.on_style  = """
@@ -551,6 +618,8 @@ class DateSelector(QFrame):
             }
         """
 
+        self.deleted = False
+
         self.selected_weekdays = []
         self.selected_monthdays = []
         self.selected_months = []
@@ -558,8 +627,6 @@ class DateSelector(QFrame):
         self.weekdays_btns:  list[SlideButton] = []
         self.monthdays_btns: list[SlideButton] = []
         self.months_btns:    list[SlideButton] = []
-
-        self.setObjectName("dateSelectorBorder")
 
         self.title = simple_label("Новое условие", 20, "Times New Roman")
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -582,10 +649,28 @@ class DateSelector(QFrame):
         self.change_week_parity(0)
 
         self.delete_button = icon_button("remove.svg", 50, 70, 'red',
-                                         callback=self.deleteLater, parent=self)
+                                         callback=self.remove, parent=self)
 
         self.clone_button  = icon_button("add.svg", 50, 70, 'blue',
                                          callback=self.clone_self, parent=self)
+
+    def remove(self):
+        self.deleted = True
+        # noinspection PyUnresolvedReferences
+        self.parent.update_date_options()
+
+        self.deleteLater()
+
+    def set_index(self, i):
+        self.title.setText(f"Условие #{i+1}")
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {"#c4c4c4" if i % 2 else "#d9d9d9"};
+            }}
+            #dateSelectorFrame {{
+                border: 4px solid black;
+            }}
+        """)
 
     def set_current_date(self):
         if self.is_weekday: self.set_to_monthday()
@@ -661,7 +746,7 @@ class DateSelector(QFrame):
         layout = QHBoxLayout()
 
         slash = simple_label("/", 20)
-        slash.setStyleSheet("color: black; border: none;")
+        slash.setStyleSheet("color: black; border: none;") # TODO
 
         self.btn_weekday = simple_button(
             "День недели", "calibri", 15, None, 0, callback=self.set_to_weekday)
@@ -783,8 +868,8 @@ class DateSelector(QFrame):
         clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months)
         clone.change_week_parity(self.parity)
 
-        clone.time_selector.set_min(self.time_selector.current_min)
-        clone.time_selector.set_max(self.time_selector.current_max)
+        clone.time_selector.set_min(self.time_selector.min_value)
+        clone.time_selector.set_max(self.time_selector.max_value)
 
         if not self.is_weekday: clone.set_to_monthday()
 
