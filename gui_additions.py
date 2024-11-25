@@ -1,6 +1,7 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from math import atan2, sin, cos, radians, ceil
 
-from PyQt6.QtCore import Qt, QSize, QRect, QPoint
+from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
@@ -8,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 
 from tags import Tags, Tag
-from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time
+from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, MultiDate, beauty_time
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -39,7 +40,7 @@ def set_color_scheme(element, name):
         }}
     """)
 
-def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40, border_offset=-20):
+def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40, border_offset=-20, addition=""):
     col_rgb = QColor.fromRgb(r, g, b)
     h = col_rgb.hue()
     s = col_rgb.saturation()
@@ -55,6 +56,7 @@ def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40,
             border-radius: 10px;
             border: 5px solid #{col4};
             color: #f0f0f0;
+            {addition}
         }}
         QPushButton::hover {{
             background-color: #{col2};
@@ -66,7 +68,6 @@ def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40,
             color: #eee;
         }}
     """)
-
 
 def recolor_icon(path, color: QColor, scale=1):
     # Загружаем оригинальный pixmap
@@ -85,7 +86,6 @@ def recolor_icon(path, color: QColor, scale=1):
     painter.end()
 
     return QIcon(pixmap)
-
 
 def simple_label(name, size, font="Calibri", fixed_width=None, bold=False, italic=False):
     lb = QLabel(name)
@@ -207,6 +207,91 @@ def ui_shadow(element):
     shadow_effect.setOffset(2, 2)
     shadow_effect.setColor(QColor(0, 0, 0, 160))
     element.setGraphicsEffect(shadow_effect)
+
+def draw_arrow(painter: QPainter, length, arrow_angle, x1, y1, x2=None, y2=None, arrow1=True, arrow2=True):
+    if x2 is None: x2 = x1
+    if y2 is None: y2 = y1
+    angle = atan2(y2 - y1, x2 - x1)
+
+    painter.drawLine(x1, y1, x2, y2)
+    if arrow1:
+        painter.drawLine(x1, y1,
+                         int(x1 + cos(angle + radians(arrow_angle - 180)) * length),
+                         int(y1 - sin(angle + radians(arrow_angle - 180)) * length))
+        painter.drawLine(x1, y1,
+                         int(x1 + cos(angle - radians(arrow_angle - 180)) * length),
+                         int(y1 - sin(angle - radians(arrow_angle - 180)) * length))
+    if arrow2:
+        painter.drawLine(x2, y2,
+                         int(x2 + cos(angle + radians(arrow_angle)) * length),
+                         int(y2 - sin(angle + radians(arrow_angle)) * length))
+        painter.drawLine(x2, y2,
+                         int(x2 + cos(angle - radians(arrow_angle)) * length),
+                         int(y2 - sin(angle - radians(arrow_angle)) * length))
+
+def paint_highlighted_border(widget: QWidget, frame, color: QColor = None, speed=100, narrow=False, margin=5):
+    painter = QPainter(widget)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    thickness = 1 if narrow else 2
+    paint_important_border(widget, painter, 0, 0, 0, frame, color, speed, thickness, margin)
+    paint_important_border(widget, painter, 1, 1, 0, frame, color, speed, thickness, margin)
+    paint_important_border(widget, painter, 1, 0, 1, frame, color, speed, thickness, margin)
+    paint_important_border(widget, painter, 0, 1, 1, frame, color, speed, thickness, margin)
+
+    painter.setPen(QPen(QColor(0, 0, 0), 10 if narrow else 14))
+    for flip_x, flip_y, angle in [
+        [0, 0, 90],
+        [0, 1, 180],
+        [1, 0, 0],
+        [1, 1, 270]
+    ]:
+        painter.drawArc(widget.width() - 32 if flip_x else 2, widget.height() - 32 if flip_y else 2,
+                        30, 30, angle * 16, 90 * 16)
+
+def paint_important_border(widget: QWidget, painter, flip_x, flip_y, flip_anim,
+                           frame, color, speed, half_size, margin):
+    min_length = 40
+    min_margin, max_margin = margin, 20
+
+    h, w = widget.height(), widget.width()
+    if flip_y: h, w = w, h
+
+    max_frame = speed
+    frac  = ((frame % (max_frame + 2)) - 1) * 2 / max_frame - 1
+    frac2 = (((frame + max_frame // 2) % (max_frame + 2)) - 1) * 2 / max_frame - 1
+
+    if flip_anim:
+        frac  *= -1
+        frac2 *= -1
+
+    allowed_height = h - max_margin * 2
+    total = allowed_height // min_length
+
+    for i in range(total):
+        y1 = allowed_height * i / total + max_margin
+        y2 = allowed_height * (i + 1) / total + max_margin
+
+        if i % 2:
+            p1 = int(interpolate(y1, y2, frac))
+            p2 = int(interpolate(y1, y2, frac + 1))
+        else:
+            p1 = int(interpolate(y1, y2, frac2))
+            p2 = int(interpolate(y1, y2, frac2 + 1))
+
+        if p1 == p2: continue
+
+        p = w - min_margin if flip_x else min_margin
+        if flip_y:
+            painter.fillRect(
+                p1, p - half_size,
+                p2 - p1 + 1, half_size * 2, color
+            )
+        else:
+            painter.fillRect(
+                p - half_size, p1,
+                half_size * 2, p2 - p1 + 1, color
+            )
 
 
 class SpoilerOptions(QPushButton):
@@ -529,12 +614,10 @@ class TimeSelector(QWidget):
         ), key=lambda x: x[1])
         if closet[1] > self.handle_radius: return
 
-        print(closet[0])
         self.active_handle      = closet[0]
         self.last_active_handle = closet[0]
 
     def mouseMoveEvent(self, event):
-        print(self.get_step())
         if self.active_handle is None: return
         value = round(self.position_to_value(event.position().x()) / self.get_step()) * self.get_step()
         if self.active_handle == 'min':
@@ -906,6 +989,7 @@ class EventSelector(QFrame):
         events_content.setMinimumWidth(0)
 
         self.events_layout = QVBoxLayout(events_content)
+        self.events_layout.setContentsMargins(0, 0, 0, 0)
 
         self.events_scroll = QScrollArea()
         self.events_scroll.setWidgetResizable(True)
@@ -933,21 +1017,201 @@ class EventSelector(QFrame):
             w.deleteLater()
 
         for event in sorted(events, key=lambda e: e.date.get_sort_value() + e.times * 10000):
-            if event.tags.have(Tags.IMPORTANT.YES):
-                btn = simple_button(event.name, "calibri", 20, bold=True)
-                set_custom_color_scheme(btn, *event.color, border_offset=-255)
-            else:
-                btn = simple_button(event.name, "calibri", 20)
-                set_custom_color_scheme(btn, *event.color)
-            btn.setFixedHeight(50)
+            btn = EventButton(event)
 
             # noinspection PyUnresolvedReferences
-            def on_click(_, event=event):
+            def on_click(_, event):
                 self.app.create_task_add_form(event)
                 self.setHidden(True)
 
-            btn.clicked.connect(on_click)
+            btn.set_on_click(on_click)
             self.events_layout.addWidget(btn)
 
         self.events_scroll.verticalScrollBar().setValue(0)
         self.setVisible(True)
+
+
+class UpcomingEvents(QFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.app = parent
+
+        self.collapsed = False
+        self.setObjectName("mainFrame")
+        self.setStyleSheet("""
+        #mainFrame {
+            background-color: #EDEDE1;
+            border-radius: 10px;
+            border: 5px solid #555;
+            color: #000;
+        }
+        """)
+
+        events_content = QWidget()
+        events_content.setMinimumHeight(0)
+
+        events_content = QWidget()
+        events_content.setMinimumWidth(0)
+
+        self.events_layout = QVBoxLayout(events_content)
+        self.events_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.events_scroll = QScrollArea()
+        self.events_scroll.setWidgetResizable(True)
+        self.events_scroll.setWidget(events_content)
+        self.events_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.events_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.events_scroll.setStyleSheet('background-color: transparent;')
+
+        self.events:         list[ScheduleEvent] = []
+        self.events_buttons: list[EventButton]   = []
+        self.toggle_btn = icon_button(
+            "up.svg", 60, 80, 'blue',
+            callback=self.toggle_view
+        )
+
+        self.main_layout = QVBoxLayout()
+
+        self.sub_layout = QHBoxLayout()
+        self.sub_layout.addWidget(self.toggle_btn)
+
+        self.main_layout.addLayout(self.sub_layout)
+        self.main_layout.addWidget(self.events_scroll)
+        self.main_layout.addStretch(0)
+
+        self.setLayout(self.main_layout)
+        self.setFixedWidth(300)
+
+        self.timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.timer.timeout.connect(self.update_timers)
+        self.timer.start(1000)
+
+        self.toggle_view()
+
+    def toggle_view(self):
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self.setFixedHeight(90)
+            self.events_scroll.setHidden(True)
+            self.toggle_btn.setIcon(recolor_icon("down.svg", QColor(240, 240, 240)))
+        else:
+            self.setFixedHeight(300)
+            self.events_scroll.setVisible(True)
+            self.toggle_btn.setIcon(recolor_icon("up.svg", QColor(240, 240, 240)))
+
+    def update_events(self, events: list[ScheduleEvent]):
+        self.events.clear()
+        self.events_buttons.clear()
+
+        for i in range(1, self.sub_layout.count()):
+            w = self.sub_layout.itemAt(i).widget()
+            w.deleteLater()
+
+        for i in range(self.events_layout.count()):
+            w = self.events_layout.itemAt(i).widget()
+            w.deleteLater()
+
+        # noinspection PyUnresolvedReferences
+        sorted_events = sorted(((event, event.get_next_date(self.app.get_now())) for event in events), key=lambda x: x[1])
+
+        for i, (event, next_date) in enumerate(sorted_events):
+            if next_date is None: continue
+            btn = EventButton(event, second_label=True)
+
+            self.events.append(event)
+            self.events_buttons.append(btn)
+            if i == 0: self.sub_layout.addWidget(btn)
+            else:      self.events_layout.addWidget(btn)
+
+        self.update_timers()
+
+    def update_timers(self):
+        if not self.events: return
+
+        # noinspection PyUnresolvedReferences
+        now = self.app.get_now()
+
+        more_events = 0
+        first_day = None
+        for i, (event, button) in enumerate(zip(self.events, self.events_buttons)):
+            event: ScheduleEvent
+            button: EventButton
+
+            next_date = event.get_next_date(now)
+            if next_date is None: return self.update_events(self.events)
+
+            subtitle = f'Остаётся: {beauty_time(ceil((next_date - now).total_seconds() / 60))}'
+
+            button.lb_subtitle.setText(subtitle)
+
+            if i == 0: first_day = next_date
+            else:
+                if next_date.date() == first_day.date():
+                    more_events += 1
+
+        if more_events > 0:
+            self.events_buttons[0].lb_subtitle.setText(
+                f'{beauty_time(ceil((first_day - now).total_seconds() / 60))} (+{more_events})'
+            )
+
+
+class EventButton(QPushButton):
+    def __init__(self, event: ScheduleEvent, override_important=None, second_label=False):
+        super().__init__()
+
+        self.lb_title = QLabel(f'<div style="line-height: 0.9;">{event.name}</div>')
+        self.lb_subtitle = QLabel("Subtitle")
+
+        for label, font_size in ((self.lb_title, 20), (self.lb_subtitle, 14)):
+            label.setFont(QFont("calibri", font_size))
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet("background-color: transparent;")
+
+        layout = QVBoxLayout()
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 5)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(self.lb_title)
+        if second_label:
+            layout.addWidget(self.lb_subtitle)
+
+        self.event = event
+        self.important = override_important or event.tags.have(Tags.IMPORTANT.YES)
+
+
+        set_custom_color_scheme(self, *event.color,
+                                addition="border: 8px solid rgb(30, 30, 30);" if self.important else "")
+
+        self.setFixedHeight(70 if self.important else 60)
+        self.click_event = None
+
+        # noinspection PyUnresolvedReferences
+        self.clicked.connect(self.on_click)
+
+        self.setLayout(layout)
+
+        if self.important:
+            self.frame = 0
+            self.timer = QTimer(self)
+            # noinspection PyUnresolvedReferences
+            self.timer.timeout.connect(self.next_frame)
+            self.timer.start(1000 // 60)
+
+    def paintEvent(self, a0):
+        super().paintEvent(a0)
+
+        if not self.important: return
+
+        paint_highlighted_border(self, self.frame, QColor(255, 0, 0), 150, True, 4)
+
+    def set_on_click(self, on_click_func):
+        self.click_event = on_click_func
+
+    def on_click(self):
+        if self.click_event: self.click_event(self, self.event)
+
+    def next_frame(self):
+        self.frame += 1
+        self.update()

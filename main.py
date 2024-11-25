@@ -3,20 +3,21 @@ import os
 import sys
 import traceback
 from datetime import datetime, timedelta, date
-from math import atan2, sin, cos, radians
 from random import randint
 
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRectF, QRect
 from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
-    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu
+    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu, QComboBox
 
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
-    EventSelector, simple_text_input, simple_tray_action, recolor_icon, SpoilerOptions
+    EventSelector, simple_text_input, simple_tray_action, recolor_icon, SpoilerOptions, draw_arrow, \
+    paint_highlighted_border, UpcomingEvents
 from tags import Tags, TagList
-from utils import months, days_of_week, ScheduleEvent, MultiDate, interpolate, rgb_to_hex, Config, str_time, log_error
+from utils import months, days_of_week, ScheduleEvent, MultiDate, rgb_to_hex, Config, str_time, log_error, \
+    beauty_time
 
 
 class ScheduleEventView(QFrame):
@@ -178,11 +179,21 @@ class ScheduleEventView(QFrame):
                 return False
         return True
 
-    def check_announce(self):
+    def check_announce(self, now):
+        if self.was_announced: return False
         if self.announce_time <= 0: return False
 
+        if self.stime - self.announce_time <= now.hour * 60 + now.minute <= self.etime:
+            return True
+
+        return False
+
     def do_announce(self):
-        pass
+        self.was_announced = True
+        self.app.tray_icon.showMessage(
+            f"{self._event.name}",
+            f"Начнётся через {beauty_time(self.announce_time)}!"
+        )
 
     def create_ui_title(self):
         lb = QLabel()
@@ -232,7 +243,9 @@ class ScheduleEventView(QFrame):
         if self.bgr_renderer:
             self.paint_background_icon()
         if self._highlight_color is not None and self._highlight_speed is not None:
-            self.paint_highlighted_border()
+            paint_highlighted_border(self, self.frame,
+                                     QColor(*self._highlight_color),
+                                     self._highlight_speed)
 
     def next_frame(self):
         if not self.important: return
@@ -255,67 +268,6 @@ class ScheduleEventView(QFrame):
         y = int(self.height() - self.bgr_icon_height - border_width + self.bgr_offset_y)
 
         self.bgr_renderer.render(painter, QRectF(x, y, self.bgr_icon_width, self.bgr_icon_height))
-
-    def paint_highlighted_border(self):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        self.paint_important_border(painter, 0, 0, 0)
-        self.paint_important_border(painter, 1, 1, 0)
-        self.paint_important_border(painter, 1, 0, 1)
-        self.paint_important_border(painter, 0, 1, 1)
-        painter.setPen(QPen(QColor(0, 0, 0), 14))
-        for flip_x, flip_y, angle in [
-            [0, 0, 90],
-            [0, 1, 180],
-            [1, 0, 0],
-            [1, 1, 270]
-        ]:
-            painter.drawArc(self.width() - 32 if flip_x else 2, self.height() - 32 if flip_y else 2,
-                            30, 30, angle * 16, 90 * 16)
-
-    def paint_important_border(self, painter, flip_x, flip_y, flip_anim):
-        min_length = 40
-        min_margin, max_margin = 5, 20
-
-        h, w = self.height(), self.width()
-        if flip_y: h, w = w, h
-
-        max_frame = self._highlight_speed
-        frac  = (( self.frame                   % (max_frame + 2)) - 1) * 2 / max_frame - 1
-        frac2 = (((self.frame + max_frame // 2) % (max_frame + 2)) - 1) * 2 / max_frame - 1
-
-        if flip_anim:
-            frac  *= -1
-            frac2 *= -1
-
-        allowed_height = h - max_margin * 2
-        total = allowed_height // min_length
-        half_size = 2
-        for i in range(total):
-            y1 = allowed_height * i / total + max_margin
-            y2 = allowed_height * (i + 1) / total + max_margin
-
-            if i % 2:
-                p1 = int(interpolate(y1, y2, frac))
-                p2 = int(interpolate(y1, y2, frac + 1))
-            else:
-                p1 = int(interpolate(y1, y2, frac2))
-                p2 = int(interpolate(y1, y2, frac2 + 1))
-
-            if p1 == p2: continue
-
-            p = w - min_margin if flip_x else min_margin
-            if flip_y:
-                painter.fillRect(
-                    p1, p - half_size,
-                    p2 - p1 + 1, half_size * 2, QColor(*self._highlight_color)
-                )
-            else:
-                painter.fillRect(
-                    p - half_size, p1,
-                    half_size * 2, p2 - p1 + 1, QColor(*self._highlight_color)
-                )
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
@@ -507,16 +459,8 @@ class TimeColumnView(QFrame):
             view1 = view2
 
             margin = 30
-            self.paint_arrow_head(painter, 15, 70,
-                                  view2.x() + margin,
-                                  y,
-                                  None,
-                                  view2.y() - 1, arrow1=i != 0)
-            self.paint_arrow_head(painter, 15, 70,
-                                  view2.x() + view2.width() - margin,
-                                  y,
-                                  None,
-                                  view2.y() - 1, arrow1=i != 0)
+            draw_arrow(painter, 15, 70, view2.x() + margin, y, None, view2.y() - 1, arrow1=i != 0)
+            draw_arrow(painter, 15, 70, view2.x() + view2.width() - margin, y, None, view2.y() - 1, arrow1=i != 0)
 
 
             timestr = f'{h}:{"0" if m < 10 else ""}{m}'
@@ -583,32 +527,7 @@ class TimeColumnView(QFrame):
         y = int((time_diff / 60 - self.min_hour) * self.per_hour) + self.margin
         painter.drawText(self.width() // 2 - x_offset, y - 3, message)
         painter.drawLine(15, y, self.width() - 15, y)
-        self.paint_arrow_head(painter, 15, 70,
-                              self.width() // 2,
-                              self.height(),
-                              None, y + 5, arrow1=False)
-
-    @staticmethod
-    def paint_arrow_head(painter: QPainter, length, arrow_angle, x1, y1, x2=None, y2=None, arrow1=True, arrow2=True):
-        if x2 is None: x2 = x1
-        if y2 is None: y2 = y1
-        angle = atan2(y2 - y1, x2 - x1)
-
-        painter.drawLine(x1, y1, x2, y2)
-        if arrow1:
-            painter.drawLine(x1, y1,
-                             int(x1 + cos(angle + radians(arrow_angle - 180)) * length),
-                             int(y1 - sin(angle + radians(arrow_angle - 180)) * length))
-            painter.drawLine(x1, y1,
-                             int(x1 + cos(angle - radians(arrow_angle - 180)) * length),
-                             int(y1 - sin(angle - radians(arrow_angle - 180)) * length))
-        if arrow2:
-            painter.drawLine(x2, y2,
-                             int(x2 + cos(angle + radians(arrow_angle)) * length),
-                             int(y2 - sin(angle + radians(arrow_angle)) * length))
-            painter.drawLine(x2, y2,
-                             int(x2 + cos(angle - radians(arrow_angle)) * length),
-                             int(y2 - sin(angle - radians(arrow_angle)) * length))
+        draw_arrow(painter, 15, 70, self.width() // 2, self.height(), None, y + 5, arrow1=False)
 
     @staticmethod
     def set_painter_font(painter, size=None, bold=None, italic=None):
@@ -619,6 +538,9 @@ class TimeColumnView(QFrame):
         painter.setFont(font)
 
     def paint_current_time_line(self):
+        i = self.app.get_now().weekday()
+
+        if abs(i - self.i) > 1: return
         if self.app.week_offset != 0: return
 
         painter = QPainter(self)
@@ -634,7 +556,7 @@ class TimeColumnView(QFrame):
             y = int(hours_from_start * self.per_hour) + self.margin
             alpha = 255
 
-        x1 = self.width() * (self.app.get_now().weekday() - self.i)
+        x1 = self.width() * (i - self.i)
         x2 = x1 + self.width()
 
         painter.setPen(QPen(QColor(255, 0, 0, alpha), 3))
@@ -684,6 +606,9 @@ class TaskForm(QFrame):
             'Выполнение и отмена': [
                 [QHBoxLayout, self.create_ui_complete_count],
                 [QVBoxLayout, self.create_ui_canceled_dates]
+            ],
+            'Запланированные задачи': [
+                [QVBoxLayout, self.create_ui_announced_tasks]
             ],
             'Прочее': [
                 [QVBoxLayout, self.create_ui_tag_select],
@@ -985,6 +910,16 @@ class TaskForm(QFrame):
                                               callback=self.add_cancel_date))
         layout.addLayout(add_date_layout)
 
+    def create_ui_announced_tasks(self, layout: QVBoxLayout):
+        self.combo_announced_task = QComboBox()
+        self.combo_announced_task.addItem("reminder.json")
+
+        add_task_layout = QHBoxLayout()
+        add_task_layout.addWidget(self.combo_announced_task)
+        add_task_layout.addWidget(icon_button("add.svg", 50, 70, 'green',
+                                              callback=self.add_cancel_date))
+        layout.addLayout(add_task_layout)
+
     def create_ui_tag_select(self, layout: QVBoxLayout):
         self.first_tag_btns = []
 
@@ -1158,15 +1093,17 @@ class TaskForm(QFrame):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, no_tray=False):
+    def __init__(self, no_tray=False, mock_time=False):
         super().__init__()
         self.cfg = Config.load()
 
         self.start_date = datetime.now()
-        self.mock_time = True
+
+        self.no_tray   = no_tray
+        self.mock_time = mock_time
 
         self.setWindowTitle("Приложение")
-        self.setGeometry(100, 100, 1000, 600)
+        self.setGeometry(100, 60, 1000, 600)
         self.setWindowIcon(QIcon("icons/app.svg"))
 
         self.font_skolar = load_font("Skolar PE Variable Regular.ttf")
@@ -1193,21 +1130,35 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(self.main_layout)
         self.setCentralWidget(central_widget)
 
+        self.upcoming_events = UpcomingEvents(self)
+
         self.hide_btn = self.create_button("hide.svg", icon_size=100, callback=self.toggle_toolbar)
         self.hide_btn.setParent(self)
 
         self.events_list = EventSelector(self)
-        self.create_tray(no_tray)
+        self.create_tray()
+
+        self.announce_timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.announce_timer.timeout.connect(self.announcements_checker)
+        self.announce_timer.start(10)
+
+        self.update_schedule_view()
 
     def get_now(self):
         if not self.mock_time: return datetime.now()
 
         n = datetime.now()
-        return datetime(n.year, n.month, n.day, 8) + (datetime.now() - self.start_date) * 1000
+        return datetime(n.year, 11, 19, 8) + (datetime.now() - self.start_date) * 3000
 
-    def create_tray(self, no_tray):
+    def announcements_checker(self):
+        now = self.get_now()
+        for event in self.scheduled_events:
+            event.exec_announced(now)
+
+    def create_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
-        if no_tray: return
+        if self.no_tray: return
         self.tray_icon.setIcon(recolor_icon("list.svg", QColor(255, 255, 255), 30))
         self.tray_icon.setVisible(True)
 
@@ -1252,8 +1203,6 @@ class MainWindow(QMainWindow):
             counter += timedelta(1)
             layout.addWidget(fr)
             self.time_columns.append(fr)
-
-        self.update_schedule_view()
 
         self.schedule_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -1488,8 +1437,11 @@ class MainWindow(QMainWindow):
         self.events_list_update_pos()
 
     def update_schedule_view(self):
+        self.upcoming_events.update_events(self.scheduled_events)
+
         for column in self.time_columns:
             column.update_views()
+
         self.update_calendar()
 
     def events_list_update_pos(self):
@@ -1518,6 +1470,11 @@ class MainWindow(QMainWindow):
         )
         self.events_list_update_pos()
 
+        self.upcoming_events.move(
+            self.width() - self.upcoming_events.width()  - 10,
+            self.days_frame.height() + 10
+        )
+
     def closeEvent(self, a0):
         self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(),
                       view_scale=self.views_height)
@@ -1528,8 +1485,8 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, a0):
         k = a0.nativeVirtualKey()
 
-        if k in Qt.Key.Key_A: self.prev_week()
-        if k in Qt.Key.Key_D: self.next_week()
+        if k == Qt.Key.Key_A: self.prev_week()
+        if k == Qt.Key.Key_D: self.next_week()
 
         if k == Qt.Key.Key_W: self.update_zoom(-200)
         if k == Qt.Key.Key_S: self.update_zoom(+200)
@@ -1541,7 +1498,7 @@ class MainWindow(QMainWindow):
 try:
     if os.getcwd().endswith("output"): os.chdir("..")
     app = QApplication(sys.argv)
-    window = MainWindow(no_tray="no_tray" in sys.argv)
+    window = MainWindow(**{k: True for k in sys.argv[1:]})
     window.show()
     sys.exit(app.exec())
 except (SystemExit, KeyboardInterrupt): print("Системный выход")

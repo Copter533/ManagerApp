@@ -1,0 +1,11 @@
+{
+  "delay": 60,
+  "params": [{"title": "str", "message": "str"}],
+  "actions": [
+    {
+      "_type": "SendNotification",
+      "title":   {"parameter": "title", "default": "Сообщение"},
+      "message": {"parameter": "message"}
+    }
+  ]
+}

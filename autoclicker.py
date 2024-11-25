@@ -1,59 +1,21 @@
+import json
 import sys
 
-import pyautogui as pgui
-
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QPushButton, QMenu, QMainWindow, QHBoxLayout
+from PyQt6.QtWidgets import QApplication, QFrame, QVBoxLayout, QHBoxLayout
 from PyQt6.QtCore import Qt, QTimer
 
-from gui_additions import simple_label, simple_button, icon_button
-
-
-class ClickerAction:
-    title: str
-    delay = 0
-
-    def __init__(self, clicker, delay=None):
-        self.clicker: AutoClickerGui = clicker
-        if delay: self.delay = delay
-
-    def get_title(self):
-        return self.title
-
-    def run(self): raise NotImplemented
-
-
-class SendNotification(ClickerAction):
-    title = "Отправка сообщения"
-
-    def __init__(self, clicker, message, **kwargs):
-        super().__init__(clicker, **kwargs)
-        self.msg = message
-
-    def run(self):
-        print("Сообщение:", self.msg)
-
-
-class PressHotKey(ClickerAction):
-    delay = .5
-    
-
-    def get_title(self):
-        return " + ".join(self.hotkey)
-
-    def __init__(self, clicker, hotkey: str, **kwargs):
-        super().__init__(clicker, **kwargs)
-        self.hotkey = [
-            i.lower() if len(i) == 1 and i.isalpha() else i
-            for i in hotkey.split("+")]
-
-    def run(self):
-        pgui.hotkey(*self.hotkey, interval=.1)
+from gui_additions import simple_label, icon_button
+from announced_task import AnnouncedTask
 
 
 class AutoClickerGui(QFrame):
-    def __init__(self):
+    def __init__(self, filename):
         super().__init__()
+
+        with open(f"announced_tasks/{filename}", "r", encoding="UTF-8") as f:
+            self.task = AnnouncedTask.from_json(json.load(f))
+            self.task.on_finished = self.set_finished
 
         # Настройка окна
         self.setWindowFlags(
@@ -65,15 +27,8 @@ class AutoClickerGui(QFrame):
 
         self.frame = QFrame()
         self.frame.setMinimumWidth(600)
-        self.frame.setFixedHeight(55) # af4151
+        self.frame.setFixedHeight(55)
         self.frame.setObjectName("mainFrame")
-        self.frame.setStyleSheet("""
-            #mainFrame {
-                background-color: #F91200; border: 5px solid black;
-                border-bottom-left-radius: 20px;
-                border-bottom-right-radius: 20px;
-            }
-        """)
 
         self.status_label = simple_label("", 15)
         self.stop_button  = icon_button("remove.svg", 30, 35, 'red',
@@ -82,7 +37,6 @@ class AutoClickerGui(QFrame):
         self.min_pos = -60
         self.max_pos = -5
 
-        self.finished = False
         self.base_pos = self.min_pos - 10
         self.y_set_delay = 0
 
@@ -105,18 +59,11 @@ class AutoClickerGui(QFrame):
 
         self.execute_timer = QTimer(self)
 
-        self.action_index = 0
-        self.actions: list[ClickerAction] = [
-            PressHotKey(self, "Win+D"),
-            PressHotKey(self, "Win+1"),
-            PressHotKey(self, "Alt+F4"),
-            PressHotKey(self, "Win+5",  delay=1),
-        ]
-
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.execute_loop()
+        self.set_started()
+        self.execute_timer.singleShot(500, self.execute_loop)
 
     def resizeEvent(self, a0):
         w = QGuiApplication.primaryScreen().size().width()
@@ -127,20 +74,16 @@ class AutoClickerGui(QFrame):
             self.y_set_delay -= 1
             return
 
-        target = self.min_pos if self.finished else self.max_pos
+        target = self.min_pos if self.task.is_finished() else self.max_pos
         self.base_pos += (target - self.base_pos) / 10
         self.move(self.x(), int(self.base_pos))
 
-    def add_action(self, action):
-        self.actions.append(action)
-
     def stop(self):
-        self.execute_timer.stop()
         self.close()
         exit(0)
 
     def set_started(self):
-        self.finished = False
+        self.status_label.setText("Запуск задачи...")
         self.frame.setStyleSheet("""
             #mainFrame {
                 background-color: #F91200; border: 5px solid black;
@@ -150,7 +93,7 @@ class AutoClickerGui(QFrame):
         """)
 
     def set_finished(self):
-        self.finished = True
+        self.task.finish()
         self.y_set_delay = 100
         self.execute_timer.singleShot(1500, self.stop)
         self.status_label.setText("Задача завершена!")
@@ -163,7 +106,9 @@ class AutoClickerGui(QFrame):
         """)
 
     def set_canceled(self):
-        self.finished = True
+        if self.task.is_finished(): return
+
+        self.task.finish()
         self.y_set_delay = 100
 
         self.execute_timer.stop()
@@ -171,18 +116,27 @@ class AutoClickerGui(QFrame):
 
         self.status_label.setText("Задача отменена")
 
-    def execute_loop(self):
-        if self.finished: return
-        if not (0 <= self.action_index < len(self.actions)): return self.set_finished()
-        a = self.actions[self.action_index]
-        self.action_index += 1
+        # AnnouncedTask(0, [SendNotification(None, "Титул", "1\n2\n3")]).execute_loop()
 
-        a.run()
-        self.status_label.setText(f'Шаг {self.action_index}/{len(self.actions)}: {a.get_title()}')
+    def execute_loop(self):
+        a = self.task.execute_loop()
+        if not a: return
+
+        self.status_label.setText(f'Шаг {self.task.get_index()}/{len(self.task.actions)}: {a.get_title()}')
         self.execute_timer.singleShot(int(a.delay * 1000), self.execute_loop)
 
+
 if __name__ == "__main__":
+    if len(sys.argv) <= 1: raise ValueError("Требуется название файла со сценарием")
+
     app = QApplication(sys.argv)
-    window = AutoClickerGui()
+    window = AutoClickerGui(sys.argv[1])
     window.show()
     sys.exit(app.exec())
+
+    # t = AnnouncedTask(0, [
+    #     PressHotKey("Win+D"),
+    #     PressHotKey("Win+1"),
+    #     PressHotKey("Alt+F4"),
+    #     PressHotKey("Win+5", delay=1),
+    # ])

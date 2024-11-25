@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, date
 from random import uniform
 
+from announced_task import AnnouncedTask
 from tags import TagList, Tags
 
 days_of_week = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС']
@@ -43,13 +44,15 @@ def word_case(num, for1, for2, for5, pref=None):
     if 1 < rem < 5: return f'{pref}{for2}'
     return f'{pref}{for5}'
 
-def beauty_time(time):
-    hour, mins = divmod(time, 60)
+def beauty_time(minutes: int):
+    hour, mins = divmod(int(minutes), 60)
+    days, hour = divmod(hour, 24)
     res = ""
-    if hour: res += f'{word_case(hour, "час",     "часа",    "часов")} '
-    if mins: res += f'{word_case(mins, "минута",  "минуты",  "минут")} '
+    if days:              res += f'{word_case(days, "день",    "дня",     "дней")} '
+    if hour:              res += f'{word_case(hour, "час",     "часа",    "часов")} '
+    if mins and not days: res += f'{word_case(mins, "минута",  "минуты",  "минут")} '
 
-    return res[:-1] if res else "0 минут"
+    return res[:-1] if res else "Сейчас"
 
 def interpolate(min_, max_, val):
     if val < 0: return min_
@@ -176,7 +179,7 @@ class MultiDate:
             "dayM": when.day,
             "mon": when.month
         }
-        return [i['time'] for i in self._states if self.match(i, targ_state)]
+        return sorted([i['time'] for i in self._states if self.match(i, targ_state)], key=lambda x: x[0])
 
     def get_sort_value(self, when=None):
         return 999 if not self._states else min(
@@ -255,6 +258,13 @@ class ScheduleEvent:
         self.date  = multi_date
         self.tags  = tags or TagList()
 
+        self.last_time_announced = None
+
+        self.tasks = [
+            # AnnouncedTask(60, [AnnouncedTask.SendNotification("1", "2")]),
+            # AnnouncedTask(24 * 60, [AnnouncedTask.SendNotification("2", "2")])
+        ]
+
         self.canceled_dates = canceled_dates or []
 
         self.times = times
@@ -298,7 +308,7 @@ class ScheduleEvent:
         if isinstance(check_date, datetime): check_date = check_date.date()
 
         if self.tags.have(Tags.LABOR.LESSON) and\
-            date(check_date.year, 6, 1) <= check_date <= date(check_date.year, 9, 30):
+            date(check_date.year, 6, 1) <= check_date <= date(check_date.year, 8, 30):
             return False
 
         if check_date in self.canceled_dates: return False
@@ -322,6 +332,44 @@ class ScheduleEvent:
 
     def get_timestamps(self, when: date = datetime.now()):
         return self.date.get_timestamps(when)
+
+    def get_next_date(self, now=datetime.now(), scope=365):
+        for i in range(scope):
+            iterator = now + timedelta(i)
+            stamps = self.get_timestamps(iterator)
+            for stamp in stamps:
+                h, m = divmod(stamp[0], 60)
+                next_date = datetime(
+                    iterator.year,
+                    iterator.month,
+                    iterator.day,
+                    h,
+                    m
+                )
+                if next_date + timedelta(minutes=stamp[1] - stamp[0]) < now: continue
+                return next_date
+        else: return None
+
+    def exec_announced(self, now=datetime.now(), scope=365):
+        if not self.tasks: return
+
+        next_date = self.get_next_date(now, scope)
+
+        executed_minutes = None
+        for task in sorted(self.tasks, reverse=True):
+            ann_time = next_date - timedelta(minutes=task.delay)
+            if self.last_time_announced is not None and ann_time <= self.last_time_announced:
+                continue
+
+            if executed_minutes is not None and task.delay < executed_minutes:
+                break
+            elif now >= ann_time:
+                executed_minutes = task.delay
+                print(task.delay)
+
+        if executed_minutes is None: return
+        self.last_time_announced = next_date - timedelta(minutes=executed_minutes)
+
 
     def __eq__(self, other):
         return self.name == other.name if isinstance(other, ScheduleEvent) else self.name == other
@@ -378,6 +426,7 @@ class Config:
                 json.dump(data, f, ensure_ascii=False, indent=4)
             else:
                 json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+
 
 def get_events_str(events):
     res = ""
