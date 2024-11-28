@@ -32,8 +32,8 @@ def rgb_to_hex(rgb_color):
 def hex_to_rgb(hex_color):
     return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-def str_time(timestamp: int, leading_zero=False):
-    h, m = divmod(int(timestamp), 60)
+def str_time(minutes: int, leading_zero=False):
+    h, m = divmod(int(minutes), 60)
     return f'{"0" if h < 10 and leading_zero else ""}{h}:{"0" if m < 10 else ""}{m}'
 
 def word_case(num, for1, for2, for5, pref=None):
@@ -67,7 +67,7 @@ def str_to_datetime(when: str):
 
 
 class MultiDate:
-    def __init__(self, weekday=None, monthday=None, month=None, time=None, parity=None):
+    def __init__(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
         self._states = []
 
         if weekday is None and monthday is None and month is None and time is None and parity is None: return
@@ -75,18 +75,20 @@ class MultiDate:
             weekday  = weekday,
             monthday = monthday,
             month    = month,
+            year     = year,
             time     = time,
             parity   = parity
         )
 
-    def add_state(self, weekday=None, monthday=None, month=None, time=None, parity=None):
+    def add_state(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
         assert weekday is None or monthday is None, 'Нельзя указать и день месяца и день недели одновременно'
         assert time, 'Обязательно нужно указать время'
 
         for min_, max_, name, value in [
-            [1,  7, 'День недели', weekday],
-            [1, 31, 'День месяца', monthday],
-            [1, 12, 'Месяц',       month]
+            [1,    7,    'День недели', weekday],
+            [1,    31,   'День месяца', monthday],
+            [1,    12,   'Месяц',       month],
+            [2024, 2100, 'Год',         year]
         ]:
             if value is None: continue
             for v in (value,) if isinstance(value, int) else value:
@@ -97,6 +99,7 @@ class MultiDate:
             "dayW": self.check_number_plus(weekday),
             "dayM": self.check_number_plus(monthday),
             "mon":  self.check_number_plus(month),
+            "year": self.check_number_plus(year),
             "time": self.time_str_to_stamp(time) if isinstance(time, str) else time
         }.items() if v is not None}
 
@@ -135,6 +138,7 @@ class MultiDate:
                 weekday  = data.get('dayW'),
                 monthday = data.get('dayM'),
                 month    = data.get('mon'),
+                year     = data.get('year'),
                 time     = data.get('time')
             )
         res._states.sort(key=cls.get_sort_value_for_state)
@@ -144,7 +148,7 @@ class MultiDate:
         res = []
         for state in self._states:
             data = state.copy()
-            for k in ('dayW', 'dayM', 'mon'):
+            for k in ('dayW', 'dayM', 'mon', 'year'):
                 if k not in data: continue
                 if len(data[k]) == 1: data[k] = data[k][0]
             res.append({k: v for k, v in data.items() if v is not None})
@@ -177,7 +181,8 @@ class MultiDate:
             "parity": when.isocalendar().week % 2,
             "dayW": when.isoweekday(),
             "dayM": when.day,
-            "mon": when.month
+            "mon":  when.month,
+            "year": when.year
         }
         return sorted([i['time'] for i in self._states if self.match(i, targ_state)], key=lambda x: x[0])
 
@@ -307,6 +312,7 @@ class ScheduleEvent:
     def can_occur(self, check_date: date | datetime):
         if isinstance(check_date, datetime): check_date = check_date.date()
 
+        # TODO: не хардкодить это
         if self.tags.have(Tags.LABOR.LESSON) and\
             date(check_date.year, 6, 1) <= check_date <= date(check_date.year, 8, 30):
             return False
@@ -334,9 +340,16 @@ class ScheduleEvent:
         return self.date.get_timestamps(when)
 
     def get_next_date(self, now=datetime.now(), scope=365):
-        for i in range(scope):
+        times = self.times
+        from_index = 0 if self.times == 0 else (now - self.anchor_date).days
+        for i in range(-from_index, scope):
             iterator = now + timedelta(i)
             stamps = self.get_timestamps(iterator)
+
+            if stamps and self.times != 0:
+                if times == 0: return None
+                times -= 1
+
             for stamp in stamps:
                 h, m = divmod(stamp[0], 60)
                 next_date = datetime(
@@ -383,8 +396,10 @@ class Config:
         self.file   = file
         self.events = events
 
-        self.y_view     = obj.get('y_view',   ) or 0
+        self.y_view     = obj.get('y_view')     or 0
         self.view_scale = obj.get('view_scale') or 2600
+
+        self.asleeps = obj.get('asleeps') or {}
 
     @classmethod
     def load(cls, file="schedule.json"):
@@ -408,16 +423,19 @@ class Config:
 
             return cls({}, file, [])
 
-    def save(self, events=None, y_view=None, view_scale=None, theme=None,
+    def save(self, events=None, y_view=None, view_scale=None, asleeps=None,
              pretty=False):
         if events:       self.events       = events
         if y_view:       self.y_view       = y_view
         if view_scale:   self.view_scale   = view_scale
+        if asleeps:      self.asleeps      = asleeps
 
         data = {
-            'events': [],
-            'y_view': y_view,
-            'view_scale': view_scale
+            'events': [], # Заполняется ниже
+
+            'y_view':     self.y_view,
+            'view_scale': self.view_scale,
+            'asleeps':    self.asleeps
         }
         for event in self.events: data['events'].append(event.to_json())
 

@@ -42,6 +42,11 @@ class Tags:
         YES = Tag("Да",  'green')
         NO  = Tag("Нет", 'red')
 
+    class TRACKING:
+        name = "Отслеживание"
+        YES = Tag("Да",  'green')
+        NO  = Tag("Нет", 'red')
+
     class _UniversalTag:
         name: str
 

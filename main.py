@@ -284,6 +284,9 @@ class ScheduleEventView(QFrame):
 
 
 class TimeColumnView(QFrame):
+    min_hour = 8
+    max_hour = 24
+
     def __init__(self, app, i, now, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.i = i
@@ -291,9 +294,6 @@ class TimeColumnView(QFrame):
         self.now: date = now
         self.original_now = now
         self.margin = 20
-
-        self.min_hour = 8
-        self.max_hour = 24
 
         self.views: list[ScheduleEventView] = []
 
@@ -525,9 +525,21 @@ class TimeColumnView(QFrame):
         if time_diff / 60 - time_diff // 60 <= 10: self.blocked_hour = time_diff // 60
         if time_diff / 60 - time_diff // 60 >= 50: self.blocked_hour = time_diff // 60 + 1
         y = int((time_diff / 60 - self.min_hour) * self.per_hour) + self.margin
-        painter.drawText(self.width() // 2 - x_offset, y - 3, message)
+
         painter.drawLine(15, y, self.width() - 15, y)
         draw_arrow(painter, 15, 70, self.width() // 2, self.height(), None, y + 5, arrow1=False)
+
+        mid_x = self.width() // 2 - x_offset
+        asleep = self.app.cfg.asleeps.get(str(self.now))
+
+        if asleep is None:
+            painter.drawText(mid_x, y - 3, message)
+        else:
+            painter.drawText(mid_x, y - 23, message)
+
+            painter.setPen(QPen(QColor(100, 30, 30, 100), 2))
+            self.set_painter_font(painter, size=16, italic=True)
+            painter.drawText(mid_x + 6, y - 4, str_time(asleep, leading_zero=True))
 
     @staticmethod
     def set_painter_font(painter, size=None, bold=None, italic=None):
@@ -652,7 +664,7 @@ class TaskForm(QFrame):
     def update_date_options(self):
         all_selectors = tuple(self.get_all_date_selectors())
         if all_selectors:
-            self.date_scroll_area.setMinimumHeight(555)
+            self.date_scroll_area.setMinimumHeight(all_selectors[0].minimumHeight() + 5)
             for i, e in enumerate(all_selectors):
                 e.set_index(i)
         else:
@@ -1005,7 +1017,7 @@ class TaskForm(QFrame):
 
             if state.get('dayM'): selector.set_to_monthday()
 
-            selector.setup_values(state.get('dayW'), state.get('dayM'), state.get('mon'))
+            selector.setup_values(state.get('dayW'), state.get('dayM'), state.get('mon'), state.get('year'))
             selector.set_parity(state.get('parity'))
 
             selector.time_selector.set_min(state['time'][0])
@@ -1038,6 +1050,7 @@ class TaskForm(QFrame):
                 weekday  = e.selected_weekdays  if     e.is_weekday else None,
                 monthday = e.selected_monthdays if not e.is_weekday else None,
                 month    = e.selected_months,
+                year     = e.selected_years,
 
                 parity = e.get_parity(),
                 time   = e.time_selector.get_timedur()
@@ -1082,6 +1095,7 @@ class TaskForm(QFrame):
             for button in widget.weekdays_btns:  yield button
             for button in widget.monthdays_btns: yield button
             for button in widget.months_btns:    yield button
+            for button in widget.years_btns:     yield button
 
     def mouseMoveEvent(self, a0):
         super().mouseMoveEvent(a0)
@@ -1141,7 +1155,13 @@ class MainWindow(QMainWindow):
         self.announce_timer = QTimer(self)
         # noinspection PyUnresolvedReferences
         self.announce_timer.timeout.connect(self.announcements_checker)
-        self.announce_timer.start(10)
+        self.announce_timer.start(1000)
+
+        self.fell_asleep_timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.fell_asleep_timer.timeout.connect(self.asleeps_checker)
+        if not self.mock_time:
+            self.fell_asleep_timer.start(10_000)
 
         self.update_schedule_view()
 
@@ -1149,12 +1169,20 @@ class MainWindow(QMainWindow):
         if not self.mock_time: return datetime.now()
 
         n = datetime.now()
-        return datetime(n.year, 11, 19, 8) + (datetime.now() - self.start_date) * 3000
+        return datetime(n.year, 12, 3, 8) + (datetime.now() - self.start_date) * 3000
 
     def announcements_checker(self):
         now = self.get_now()
         for event in self.scheduled_events:
             event.exec_announced(now)
+
+    def asleeps_checker(self):
+        now = datetime.now()
+        day = (now - timedelta(hours=TimeColumnView.min_hour)).date()
+        minutes = now.time().hour * 60 + now.time().minute
+
+        self.cfg.asleeps[str(day)] = minutes
+        self.cfg.save()
 
     def create_tray(self):
         self.tray_icon = QSystemTrayIcon(self)

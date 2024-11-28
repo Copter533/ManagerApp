@@ -1,4 +1,4 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from math import atan2, sin, cos, radians, ceil
 
 from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer
@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 
 from tags import Tags, Tag
-from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, MultiDate, beauty_time
+from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -61,11 +61,13 @@ def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40,
         QPushButton::hover {{
             background-color: #{col2};
             color: #fff;
+            {addition}
         }}
         QPushButton::pressed {{
             border: 5px solid #{col3};
             background-color: #{col4};
             color: #eee;
+            {addition}
         }}
     """)
 
@@ -664,7 +666,7 @@ class DateSelector(QFrame):
         self.setParent(parent)
         self.parent = parent
         self.setObjectName("dateSelectorFrame")
-        self.setMinimumHeight(550)
+        self.setMinimumHeight(590)
 
         self.on_style  = """
             QPushButton {
@@ -706,10 +708,12 @@ class DateSelector(QFrame):
         self.selected_weekdays = []
         self.selected_monthdays = []
         self.selected_months = []
+        self.selected_years = []
 
         self.weekdays_btns:  list[SlideButton] = []
         self.monthdays_btns: list[SlideButton] = []
         self.months_btns:    list[SlideButton] = []
+        self.years_btns:     list[SlideButton] = []
 
         self.title = simple_label("Новое условие", 20, "Times New Roman")
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -720,6 +724,7 @@ class DateSelector(QFrame):
         self.create_ui_weekday_select()
         self.create_ui_monthday_select()
         self.create_ui_month_select()
+        self.create_ui_year_select()
         self.create_ui_weekparity()
         self.create_ui_time_select()
         self.layout.addStretch(0)
@@ -761,15 +766,17 @@ class DateSelector(QFrame):
         now = datetime.now()
         for compare, btns in [
             [now.day,   self.monthdays_btns],
-            [now.month, self.months_btns]
+            [now.month, self.months_btns],
+            [now.year,  self.years_btns]
         ]:
             for btn in btns: btn.setState(btn.value == compare)
 
-    def setup_values(self, weekdays, monthdays, months):
+    def setup_values(self, weekdays, monthdays, months, years):
         for btns, compares in [
             [self.weekdays_btns,  weekdays],
             [self.monthdays_btns, monthdays],
-            [self.months_btns,    months]
+            [self.months_btns,    months],
+            [self.years_btns,     years]
         ]:
             if compares is None: continue
             for btn in btns:
@@ -829,7 +836,7 @@ class DateSelector(QFrame):
         layout = QHBoxLayout()
 
         slash = simple_label("/", 20)
-        slash.setStyleSheet("color: black; border: none;") # TODO
+        slash.setStyleSheet("color: black; border: none;")
 
         self.btn_weekday = simple_button(
             "День недели", "calibri", 15, None, 0, callback=self.set_to_weekday)
@@ -923,6 +930,35 @@ class DateSelector(QFrame):
         self.month_select_container.setLayout(layout)
         self.layout.addWidget(self.month_select_container)
 
+    def create_ui_year_select(self):
+        self.year_select_container = QWidget()
+        self.year_select_container.setFixedHeight(50)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        year = datetime.now().year
+        for i in range(year - 1, year + 4 + 1):
+            btn = SlideButton(self, self.year_select_container, i, f'{i}', "calibri", 20, None)
+            btn.setFixedSize(83, 45)
+            self.years_btns.append(btn)
+
+            def on_click(btn: SlideButton):
+                if btn.value in self.selected_years:
+                    btn.setStyleSheet(self.off_style)
+                    self.selected_years.remove(btn.value)
+                else:
+                    btn.setStyleSheet(self.on_style)
+                    self.selected_years.append(btn.value)
+
+            btn.setOnClick(on_click)
+            btn.setStyleSheet(self.off_style)
+            layout.addWidget(btn)
+
+        self.year_select_container.setLayout(layout)
+        self.layout.addWidget(self.year_select_container)
+
     def create_ui_weekparity(self):
         layout = QHBoxLayout()
 
@@ -948,7 +984,7 @@ class DateSelector(QFrame):
 
     def clone_self(self):
         clone = DateSelector(self.parent)
-        clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months)
+        clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months, self.selected_years)
         clone.change_week_parity(self.parity)
 
         clone.time_selector.set_min(self.time_selector.min_value)
@@ -1020,8 +1056,8 @@ class EventSelector(QFrame):
             btn = EventButton(event)
 
             # noinspection PyUnresolvedReferences
-            def on_click(_, event):
-                self.app.create_task_add_form(event)
+            def on_click(button: EventButton):
+                self.app.create_task_add_form(button.event)
                 self.setHidden(True)
 
             btn.set_on_click(on_click)
@@ -1066,9 +1102,10 @@ class UpcomingEvents(QFrame):
         self.events:         list[ScheduleEvent] = []
         self.events_buttons: list[EventButton]   = []
         self.toggle_btn = icon_button(
-            "up.svg", 60, 80, 'blue',
+            "up.svg", 0, 90, 'blue',
             callback=self.toggle_view
         )
+        self.toggle_btn.setFixedSize(50, 70)
 
         self.main_layout = QVBoxLayout()
 
@@ -1092,7 +1129,7 @@ class UpcomingEvents(QFrame):
     def toggle_view(self):
         self.collapsed = not self.collapsed
         if self.collapsed:
-            self.setFixedHeight(90)
+            self.setFixedHeight(100)
             self.events_scroll.setHidden(True)
             self.toggle_btn.setIcon(recolor_icon("down.svg", QColor(240, 240, 240)))
         else:
@@ -1112,17 +1149,41 @@ class UpcomingEvents(QFrame):
             w = self.events_layout.itemAt(i).widget()
             w.deleteLater()
 
-        # noinspection PyUnresolvedReferences
-        sorted_events = sorted(((event, event.get_next_date(self.app.get_now())) for event in events), key=lambda x: x[1])
+        def tracking(event: ScheduleEvent):
+            # noinspection PyUnresolvedReferences
+            if event.get_next_date(self.app.get_now()) is None: return False
+            if event.tags.have(Tags.TRACKING.NO): return False
 
+            if event.tags.have(Tags.IMPORTANT.YES): return True
+            if event.tags.have(Tags.TRACKING.YES):  return True
+
+            return False
+
+        # noinspection PyUnresolvedReferences
+        sorted_events = sorted(
+            ((event, event.get_next_date(self.app.get_now())) for event in events if tracking(event)),
+            key=lambda x: x[1])
+
+        if not sorted_events:
+            return self.setHidden(True)
+        self.setVisible(True)
+
+        prev_date = None
         for i, (event, next_date) in enumerate(sorted_events):
             if next_date is None: continue
             btn = EventButton(event, second_label=True)
+            btn.set_on_click_editor(self.app)
 
             self.events.append(event)
             self.events_buttons.append(btn)
-            if i == 0: self.sub_layout.addWidget(btn)
-            else:      self.events_layout.addWidget(btn)
+            if i == 0:
+                btn.setFixedHeight(70)
+                self.sub_layout.addWidget(btn)
+            else:
+                if prev_date != next_date.date() and prev_date is not None:
+                    self.events_layout.addWidget(new_separator(h=4))
+                self.events_layout.addWidget(btn)
+                prev_date = next_date.date()
 
         self.update_timers()
 
@@ -1139,9 +1200,10 @@ class UpcomingEvents(QFrame):
             button: EventButton
 
             next_date = event.get_next_date(now)
-            if next_date is None: return self.update_events(self.events)
+            if next_date is None: return self.update_events(self.events.copy())
 
-            subtitle = f'Остаётся: {beauty_time(ceil((next_date - now).total_seconds() / 60))}'
+            prefix = "" if i == 0 else "Остаётся: "
+            subtitle = f'{prefix}{beauty_time(ceil((next_date - now).total_seconds() / 60))}'
 
             button.lb_subtitle.setText(subtitle)
 
@@ -1209,8 +1271,11 @@ class EventButton(QPushButton):
     def set_on_click(self, on_click_func):
         self.click_event = on_click_func
 
+    def set_on_click_editor(self, app):
+        self.click_event = lambda _: app.create_task_add_form(self.event)
+
     def on_click(self):
-        if self.click_event: self.click_event(self, self.event)
+        if self.click_event: self.click_event(self)
 
     def next_frame(self):
         self.frame += 1
