@@ -1,0 +1,11 @@
+{
+  "name": "Простое предупреждение",
+  "params": {"title": "str", "message": "str"},
+  "actions": [
+    {
+      "_type": "SendAlarm",
+      "title":   {"parameter": "title",   "default": "Предупреждение"},
+      "message": {"parameter": "message", "default": "[Вставьте текст]"}
+    }
+  ]
+}

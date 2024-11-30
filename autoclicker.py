@@ -10,12 +10,13 @@ from announced_task import AnnouncedTask
 
 
 class AutoClickerGui(QFrame):
-    def __init__(self, filename):
+    def __init__(self, params_str: str):
         super().__init__()
 
-        with open(f"announced_tasks/{filename}", "r", encoding="UTF-8") as f:
-            self.task = AnnouncedTask.from_json(json.load(f))
-            self.task.on_finished = self.set_finished
+        self.task = AnnouncedTask.from_file(json.loads(params_str
+                                                       .replace('=', ':')
+                                                       .replace("'", '"')))
+        self.task.on_finished = self.set_finished
 
         # Настройка окна
         self.setWindowFlags(
@@ -122,21 +123,15 @@ class AutoClickerGui(QFrame):
         a = self.task.execute_loop()
         if not a: return
 
-        self.status_label.setText(f'Шаг {self.task.get_index()}/{len(self.task.actions)}: {a.get_title()}')
+        self.status_label.setText(f'Шаг {self.task.get_index()}/{len(self.task._actions)}: {a.get_title()}')
         self.execute_timer.singleShot(int(a.delay * 1000), self.execute_loop)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) <= 1: raise ValueError("Требуется название файла со сценарием")
+    sys.argv = ["", "{'file'='ifmo_connect.json','params'={'index'='Win+3'},'delay'=0}"]
+    if len(sys.argv) <= 1: raise ValueError("Требуется параметры задачи!")
 
     app = QApplication(sys.argv)
     window = AutoClickerGui(sys.argv[1])
     window.show()
     sys.exit(app.exec())
-
-    # t = AnnouncedTask(0, [
-    #     PressHotKey("Win+D"),
-    #     PressHotKey("Win+1"),
-    #     PressHotKey("Alt+F4"),
-    #     PressHotKey("Win+5", delay=1),
-    # ])

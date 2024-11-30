@@ -1,13 +1,17 @@
+import json
+import os
 from datetime import datetime, date
 from math import atan2, sin, cos, radians, ceil
 
 from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer
-from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction
+from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction, QStandardItem, \
+    QStandardItemModel
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox
 )
 
+from announced_task import AnnouncedTask
 from tags import Tags, Tag
 from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time
 
@@ -40,7 +44,8 @@ def set_color_scheme(element, name):
         }}
     """)
 
-def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40, border_offset=-20, addition=""):
+def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40, border_offset=-20,
+                            addition="", element_name="QPushButton", after=""):
     col_rgb = QColor.fromRgb(r, g, b)
     h = col_rgb.hue()
     s = col_rgb.saturation()
@@ -51,24 +56,25 @@ def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40,
     col4 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + border_offset))).getRgb())
 
     element.setStyleSheet(f"""
-        QPushButton {{
+        {element_name} {{
             background-color: #{col1};
             border-radius: 10px;
             border: 5px solid #{col4};
             color: #f0f0f0;
             {addition}
         }}
-        QPushButton::hover {{
+        {element_name}::hover {{
             background-color: #{col2};
             color: #fff;
             {addition}
         }}
-        QPushButton::pressed {{
+        {element_name}::pressed {{
             border: 5px solid #{col3};
             background-color: #{col4};
             color: #eee;
             {addition}
         }}
+        {after}
     """)
 
 def recolor_icon(path, color: QColor, scale=1):
@@ -143,6 +149,19 @@ def simple_text_input(default_text, font_size, font="calibri", bold=False, itali
     text_edit.setStyleSheet("border-bottom: 3px solid lightblue;")
 
     return text_edit
+
+def simple_combo_box(options, font_size, font="calibri", bold=False, italic=False):
+    font = QFont(font, font_size)
+    font.setItalic(italic)
+    font.setBold(bold)
+
+    box = QComboBox()
+    box.setFont(font)
+    box.setStyleSheet("border-bottom: 3px solid lightblue;")
+
+    if options: box.addItems(options)
+
+    return box
 
 def simple_tray_action(parent, name, callback=None):
     action = QAction(name, parent)
@@ -1003,6 +1022,181 @@ class DateSelector(QFrame):
         for btn in [self.delete_button, self.clone_button]:
             btn.move(self.width() - start_pos - btn.width(), 10)
             start_pos += btn.width() + between_offset
+
+
+class AnnouncedTaskSelect(QComboBox):
+    def __init__(self):
+        super().__init__()
+
+        self.elements = {}
+
+        self.setStyleSheet("""
+            QWidget {
+                border: 3px solid #333;
+                padding-left: 10px;
+                border-radius: 5px;
+                font-size: 25px;
+            }
+            
+            QComboBox::drop-down {
+                border: none;
+                width: 50px;
+                height: 50px;
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+            }
+            
+            QComboBox::down-arrow {
+                width: 50px;
+                height: 50px;
+                image: url(icons/down.svg);
+            }
+        """)
+        self.setMaximumWidth(500)
+        self.setFixedHeight(50)
+
+        self.updater_timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.updater_timer.timeout.connect(self.update_tasks)
+        self.updater_timer.start(1000)
+        self.update_tasks()
+
+    def update_tasks(self):
+        tasks = [file for file in os.listdir("announced_tasks") if file.endswith(".json")]
+        if tasks == list(self.elements.keys()): return
+
+        self.clear()
+        self.elements.clear()
+
+        model = QStandardItemModel()
+
+        option = None
+        for file in tasks:
+            try:
+                with open(f'announced_tasks/{file}', 'r', encoding="UTF-8") as f:
+                    task = AnnouncedTask.from_json(file, json.load(f))
+
+                    option = QStandardItem(task.display_name)
+                    option.setData(task, Qt.ItemDataRole.UserRole)
+
+                    self.elements[file] = task
+            except Exception as ex:
+                option = QStandardItem(f"{file} // {ex}")
+                option.setForeground(QColor(255, 0, 0))
+            finally:
+                model.appendRow(option)
+
+        self.setModel(model)
+
+    def currentTask(self):
+        return self.currentData(Qt.ItemDataRole.UserRole)
+
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class AnnouncedTaskSetup(QFrame):
+    def __init__(self, task: AnnouncedTask):
+        super().__init__()
+
+        self.task = task
+
+        self.setObjectName("mainFrame")
+        self.setStyleSheet("""
+            #mainFrame {
+                border: 3px solid #333;
+                border-radius: 5px;
+                font-size: 25px;
+            }
+        """)
+
+        self.task_title = simple_label(f'"{task.display_name}"', 20)
+        self.task_title.setWordWrap(True)
+        self.before_type_combo = simple_combo_box([
+            "за N минут", "N мин. / после", "Если просрочено"], 16)
+        self.before_minutes_input = simple_line_input("N", 16)
+        self.remove_button = simple_button("Удалить", "calibri", 16, 40,
+                                           callback=self.deleteLater)
+
+        if task.delay >= 0:
+            if not task.do_expire:
+                self.before_type_combo.setCurrentIndex(0) # за N минут
+            else:
+                self.before_type_combo.setCurrentIndex(1) # N мин. / после
+        else:
+            self.before_type_combo.setCurrentIndex(2) # Если просрочено
+
+        self.before_minutes_input.setText(str(max(0, task.delay)))
+        set_color_scheme(self.remove_button, 'red')
+
+        layout = QHBoxLayout()
+
+        setup_layout = QVBoxLayout()
+        setup_layout.addWidget(self.task_title)
+        setup_layout.addWidget(self.before_type_combo)
+        setup_layout.addWidget(self.before_minutes_input)
+        setup_layout.addWidget(self.remove_button)
+        for i in range(setup_layout.count()): setup_layout.itemAt(i).widget().setFixedWidth(200)
+
+        if not task.params_scheme:
+            self.task_title.setFixedWidth(550)
+
+        layout.addLayout(setup_layout)
+
+        # =====
+
+        self.params_layout = QVBoxLayout()
+        layout.addLayout(self.params_layout)
+        for k, v in task.params_scheme.items():
+            self.params_layout.addWidget(AnnouncedParameter(k, v, task.params.get(k)))
+
+        self.setLayout(layout)
+
+    def build_task(self):
+        for i in range(self.params_layout.count()):
+            w = self.params_layout.itemAt(i).widget()
+            if not isinstance(w, AnnouncedParameter): continue
+            if not w.input.text(): continue
+
+            self.task.params[w.name] = w.input.text()
+
+        on_expire   = self.before_type_combo.currentIndex() >= 1
+        ensure_time = self.before_type_combo.currentIndex() <= 1
+
+        minutes = -1
+        try:
+            if ensure_time: minutes = int(self.before_minutes_input.text())
+        except ValueError:
+            raise AssertionError('Укажи кол-во минут перед задачей')
+
+        self.task.delay     = minutes
+        self.task.do_expire = on_expire
+
+        return self.task
+
+
+class AnnouncedParameter(QFrame):
+    def __init__(self, name, _type, value=None):
+        super().__init__()
+        self.name = name
+        self.type = _type
+
+        self.input = simple_line_input(_type, 16)
+        if value: self.input.setText(value)
+
+        layout = QHBoxLayout()
+        layout.addWidget(simple_label(name.capitalize() + ":", 22))
+        layout.addWidget(self.input)
+
+        v = abs(hash(name + _type)) % (55 ** 3)
+        rg, b = divmod(v, 55)
+        r, g = divmod(rg, 55)
+        set_custom_color_scheme(self, *[a + 100 for a in (r, g, b)], element_name="#paramFrame",
+                                after="QWidget { background-color: transparent; color: white; }")
+
+        self.setObjectName("paramFrame")
+        self.setFixedHeight(60)
+        self.setLayout(layout)
 
 
 class EventSelector(QFrame):

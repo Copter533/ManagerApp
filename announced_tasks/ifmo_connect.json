@@ -1,0 +1,41 @@
+{
+  "name": "Подключится к серву ИТМО",
+  "actions": [
+    {
+      "_type": "PressHotKey",
+      "hotkey": "Win+R"
+    },
+    {
+      "_type": "TypeText",
+      "text": "cmd"
+    },
+    {
+      "_type": "PressHotKey",
+      "hotkey": "Enter"
+    },
+    {
+      "_type": "WaitTime",
+      "time": 1
+    },
+    {
+      "_type": "TypeText",
+      "text": "ssh -p 2222 s467388@se.ifmo.ru"
+    },
+    {
+      "_type": "PressHotKey",
+      "hotkey": "Enter"
+    },
+    {
+      "_type": "WaitTime",
+      "time": 1
+    },
+    {
+      "_type": "TypeText",
+      "text": "VOZj*6486"
+    },
+    {
+      "_type": "PressHotKey",
+      "hotkey": "Enter"
+    }
+  ]
+}

@@ -11,10 +11,11 @@ from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
     QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu, QComboBox
 
+from announced_task import AnnouncedTask
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
     EventSelector, simple_text_input, simple_tray_action, recolor_icon, SpoilerOptions, draw_arrow, \
-    paint_highlighted_border, UpcomingEvents
+    paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup
 from tags import Tags, TagList
 from utils import months, days_of_week, ScheduleEvent, MultiDate, rgb_to_hex, Config, str_time, log_error, \
     beauty_time
@@ -514,7 +515,7 @@ class TimeColumnView(QFrame):
             if time_diff < self.min_hour * 60: return
             if time_diff > self.max_hour * 60: return
 
-        if time_diff < 22 * 60:
+        if time_diff < 20 * 60:
             time_diff = 22 * 60
             self.set_painter_font(painter, size=16, italic=True)
             painter.setPen(QPen(QColor(200, 30, 30), 5))
@@ -732,6 +733,9 @@ class TaskForm(QFrame):
         for i, d in enumerate(self.canceled_dates_values, start=1):
             d.set_number(i)
 
+    def add_announced_task(self, v=None):
+        self.announced_task_layout.addWidget(AnnouncedTaskSetup(v or self.combo_announced_task.currentTask()))
+
     def get_tags(self):
         tag_list = TagList()
         for first_btn in self.first_tag_btns:
@@ -923,13 +927,17 @@ class TaskForm(QFrame):
         layout.addLayout(add_date_layout)
 
     def create_ui_announced_tasks(self, layout: QVBoxLayout):
-        self.combo_announced_task = QComboBox()
-        self.combo_announced_task.addItem("reminder.json")
+        layout.addWidget(simple_label("Выполняемые действия", 30))
+
+        self.announced_task_layout = QVBoxLayout()
+        self.combo_announced_task = AnnouncedTaskSelect()
 
         add_task_layout = QHBoxLayout()
         add_task_layout.addWidget(self.combo_announced_task)
         add_task_layout.addWidget(icon_button("add.svg", 50, 70, 'green',
-                                              callback=self.add_cancel_date))
+                                              callback=self.add_announced_task))
+
+        layout.addLayout(self.announced_task_layout)
         layout.addLayout(add_task_layout)
 
     def create_ui_tag_select(self, layout: QVBoxLayout):
@@ -1029,15 +1037,22 @@ class TaskForm(QFrame):
 
         self.update_anchor_month(task.anchor_date.month, task.anchor_date.day)
 
+        # Даты отмены
         for cancel_date in task.canceled_dates:
             self.add_cancel_date(CancelDate(self, f'{cancel_date.day}.{cancel_date.month}.{cancel_date.year}'),
                                  ignore_match=True)
 
+        # Задачи
+        for announced_task in task.tasks:
+            self.add_announced_task(announced_task)
+
+        # Тэги
         for first_btn in self.first_tag_btns:
             for tag_btn in first_btn.other_btns:
                 if tag_btn.tag in task.tags:
                     tag_btn.onClick()
 
+        # Цвет
         col = QColor(*task.color)
         self.update_color([col.hue(), col.saturation(), col.value()])
 
@@ -1060,6 +1075,13 @@ class TaskForm(QFrame):
 
         color = QColor.fromHsv(*self.color_value).getRgb()
 
+        tasks = []
+        for i in range(self.announced_task_layout.count()):
+            w = self.announced_task_layout.itemAt(i).widget()
+            if not isinstance(w, AnnouncedTaskSetup): continue
+            tasks.append(w.build_task())
+
+
         return ScheduleEvent(
             self.input_name.text(), date,
             description    = self.input_desc.toPlainText() or None,
@@ -1067,7 +1089,8 @@ class TaskForm(QFrame):
             anchor_date    = datetime(self.main_window.get_now().year, self.anchor_month, self.anchor_day),
             canceled_dates = [cancel_date.date for cancel_date in self.canceled_dates_values],
             tags           = self.get_tags(),
-            color          = [color[0], color[1], color[2]]
+            color          = [color[0], color[1], color[2]],
+            tasks          = tasks
         )
 
     def finish(self):
@@ -1107,13 +1130,13 @@ class TaskForm(QFrame):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, no_tray=False, mock_time=False):
+    def __init__(self, debug=False, mock_time=False):
         super().__init__()
         self.cfg = Config.load()
 
         self.start_date = datetime.now()
 
-        self.no_tray   = no_tray
+        self.debug     = debug
         self.mock_time = mock_time
 
         self.setWindowTitle("Приложение")
@@ -1155,7 +1178,7 @@ class MainWindow(QMainWindow):
         self.announce_timer = QTimer(self)
         # noinspection PyUnresolvedReferences
         self.announce_timer.timeout.connect(self.announcements_checker)
-        self.announce_timer.start(1000)
+        self.announce_timer.start(10 if self.mock_time else 1000)
 
         self.fell_asleep_timer = QTimer(self)
         # noinspection PyUnresolvedReferences
@@ -1186,7 +1209,7 @@ class MainWindow(QMainWindow):
 
     def create_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
-        if self.no_tray: return
+
         self.tray_icon.setIcon(recolor_icon("list.svg", QColor(255, 255, 255), 30))
         self.tray_icon.setVisible(True)
 
@@ -1467,6 +1490,9 @@ class MainWindow(QMainWindow):
     def update_schedule_view(self):
         self.upcoming_events.update_events(self.scheduled_events)
 
+        for event in self.scheduled_events:
+            event.connect_app(self)
+
         for column in self.time_columns:
             column.update_views()
 
@@ -1506,7 +1532,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0):
         self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(),
                       view_scale=self.views_height)
-        if self.have_tray():
+        if not self.debug:
             self.hide()
             a0.ignore()
 

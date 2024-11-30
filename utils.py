@@ -257,7 +257,7 @@ class MultiDate:
 class ScheduleEvent:
     def __init__(self, name, multi_date: MultiDate, description: str = None,
                  times=0, tags: TagList = None, anchor_date: datetime = None,
-                 canceled_dates: list[date] = None, color: list[int | int | int] | str = None):
+                 canceled_dates: list[date] = None, color: list[int | int | int] | str = None, tasks=None):
         self.name  = name
         self.desc  = description
         self.date  = multi_date
@@ -265,10 +265,7 @@ class ScheduleEvent:
 
         self.last_time_announced = None
 
-        self.tasks = [
-            # AnnouncedTask(60, [AnnouncedTask.SendNotification("1", "2")]),
-            # AnnouncedTask(24 * 60, [AnnouncedTask.SendNotification("2", "2")])
-        ]
+        self.tasks: list[AnnouncedTask] = tasks or []
 
         self.canceled_dates = canceled_dates or []
 
@@ -289,11 +286,13 @@ class ScheduleEvent:
         times = data.get('times', 0)
         anchor = str_to_datetime(data.get('anchor')) if 'anchor' in data else None
 
+        tasks = [AnnouncedTask.from_file(o) for o in data.get('tasks', ())]
+
         cancel_dates = [date(*map(int, day.split('-'))) for day in data.get('canceled', '').split(',') if day]
 
         return cls(name, multi_date, times=times, description=desc, tags=TagList.from_json(tags),
                    anchor_date=anchor, canceled_dates=cancel_dates,
-                   color=data.get('color'))
+                   color=data.get('color'), tasks=tasks)
 
     def to_json(self):
         data = {
@@ -306,8 +305,14 @@ class ScheduleEvent:
         if self.tags:       data['tags']  = self.tags.to_json()
         if self.have_color: data['color'] = rgb_to_hex(self.color)
 
+        if self.tasks: data['tasks'] = [task.to_file() for task in self.tasks]
+
         if self.canceled_dates: data['canceled'] = ','.join(map(str, self.canceled_dates))
         return data
+
+    def connect_app(self, app):
+        for task in self.tasks:
+            task.connect_app(app)
 
     def can_occur(self, check_date: date | datetime):
         if isinstance(check_date, datetime): check_date = check_date.date()
@@ -339,14 +344,17 @@ class ScheduleEvent:
     def get_timestamps(self, when: date = datetime.now()):
         return self.date.get_timestamps(when)
 
-    def get_next_date(self, now=datetime.now(), scope=365):
+    def get_next_date(self, now=datetime.now(), scope=365, same_day=False):
         times = self.times
         from_index = 0 if self.times == 0 else (now - self.anchor_date).days
         for i in range(-from_index, scope):
             iterator = now + timedelta(i)
             stamps = self.get_timestamps(iterator)
+            if not stamps: continue
 
-            if stamps and self.times != 0:
+            if same_day: stamps = [[stamps[0][0], stamps[-1][-1]]]
+
+            if self.times != 0:
                 if times == 0: return None
                 times -= 1
 
@@ -361,12 +369,13 @@ class ScheduleEvent:
                 )
                 if next_date + timedelta(minutes=stamp[1] - stamp[0]) < now: continue
                 return next_date
-        else: return None
+        return None
 
     def exec_announced(self, now=datetime.now(), scope=365):
         if not self.tasks: return
 
-        next_date = self.get_next_date(now, scope)
+        next_date = self.get_next_date(now, scope, same_day=True)
+        if next_date is None: return
 
         executed_minutes = None
         for task in sorted(self.tasks, reverse=True):
@@ -376,9 +385,10 @@ class ScheduleEvent:
 
             if executed_minutes is not None and task.delay < executed_minutes:
                 break
+
             elif now >= ann_time:
                 executed_minutes = task.delay
-                print(task.delay)
+                task.run()
 
         if executed_minutes is None: return
         self.last_time_announced = next_date - timedelta(minutes=executed_minutes)
