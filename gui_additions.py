@@ -1,14 +1,16 @@
 import json
 import os
+import sys
 from datetime import datetime, date
 from math import atan2, sin, cos, radians, ceil
+from typing import Type
 
-from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer
+from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction, QStandardItem, \
     QStandardItemModel
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMainWindow, QMessageBox
 )
 
 from announced_task import AnnouncedTask
@@ -215,7 +217,7 @@ def load_font(path):
     if font_id == -1: return None
     return QFontDatabase.applicationFontFamilies(font_id)[0]
 
-def new_separator(w=None, h=None, col="#000000"):
+def new_separator(*, w=None, h=None, col="#000000"):
     separator = QFrame()
     if w is not None: separator.setFixedWidth(w)
     if h is not None: separator.setFixedHeight(h)
@@ -315,11 +317,85 @@ def paint_important_border(widget: QWidget, painter, flip_x, flip_y, flip_anim,
             )
 
 
+def framed_ui(parent, structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
+    for j, (spoiler_name, spoiler_options) in enumerate(structure.items()):
+        widgets = []
+        have_spoiler = not spoiler_name.startswith('-')
+        if have_spoiler:
+            spoiler = SpoilerOptions(spoiler_name)
+            yield spoiler
+
+        for i, (layout_type, ui_creator) in enumerate(spoiler_options):
+            fr = QFrame()
+            style = f"""
+                background-color: {"#f4f4f4" if i % 2 else "#f9f9f9"};
+            """
+            radius = 5
+            if i == 0:
+                style += f"border-top-left-radius:    {radius}px; border-top-right-radius:    {radius}px; "
+            if i == len(spoiler_options)-1:
+                style += f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; "
+
+            fr.setStyleSheet(style)
+            layout: QHBoxLayout = layout_type()
+            ui_creator(layout)
+            layout.addStretch(0)
+            fr.setLayout(layout)
+
+            widgets.append(fr)
+            yield fr
+
+        if have_spoiler:
+            # noinspection PyUnboundLocalVariable
+            spoiler.set_widgets(widgets, parent=parent)
+
+            if j == 0:
+                spoiler.set_shown(True)
+
+def sidebars_ui(sidebars: QVBoxLayout | QVBoxLayout, structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
+    for j, (category_name, category_options) in enumerate(structure.items()):
+        def on_click():
+            print("CLK")
+        sidebars.addWidget(simple_button(category_name, "calibri", 25, color_scheme='gray', callback=on_click))
+
+        for i, (layout_type, ui_creator) in enumerate(category_options):
+            fr = QFrame()
+            layout = layout_type()
+            ui_creator(layout)
+            fr.setLayout(layout)
+
+            yield fr
+
+
+
+def set_size_prop(app: QApplication, widget: QWidget, w, h):
+    size = app.primaryScreen().size()
+    widget.setGeometry(
+        int(size.width() * (1 - w) / 2), int(size.height() * (1 - h) / 2),
+        int(size.width() * w),           int(size.height() * h)
+    )
+
+
+class SingleInstanceApplication(QApplication):
+    def __init__(self, *args, unique_key):
+        super().__init__(*args)
+        self.shared_memory = QSharedMemory(unique_key)
+        if self.shared_memory.attach():
+            self.alert_other_instance()
+            sys.exit(0)
+        else:
+            if not self.shared_memory.create(1):
+                QMessageBox.critical(None, "Ошибка", "Не удалось создать уникальный маркер для приложения")
+                sys.exit(1)
+
+    def alert_other_instance(self):
+        print("Multiple runs")
+
+
 class SpoilerOptions(QPushButton):
     def __init__(self, name: str, widgets: list[QWidget] = None, collapsed=True):
         super().__init__(name)
 
-        self.shown = True
         self.widgets = widgets if widgets else []
 
         self.setContentsMargins(0, 0, 0, 0)
@@ -348,26 +424,35 @@ class SpoilerOptions(QPushButton):
 
         # noinspection PyUnresolvedReferences
         self.clicked.connect(self.on_click)
-        if collapsed: self.hide_all()
+        self.set_hidden(collapsed)
 
-    def setWidgets(self, widgets):
+    def set_widgets(self, widgets, parent=None):
+        for w in widgets:
+            if parent: w.setParent(parent)
+            p = w.parent()
+            if p is None:
+                print("Будь добр виджеты сначала в лэйаут добавить")
+                raise ValueError
+
         self.widgets = widgets
+        self.set_shown(self.shown)
+
+    def add_widget(self, widget):
+        self.widgets.append(widget)
+        self.set_shown(self.shown)
 
     def on_click(self):
-        if self.shown:
-            self.hide_all()
+        self.set_hidden(self.shown)
+
+    def set_shown(self, is_shown):
+        self.shown = is_shown
+        if is_shown:
+            for widget in self.widgets: widget.show()
         else:
-            self.show_all()
+            for widget in self.widgets: widget.hide()
 
-    def hide_all(self):
-        self.shown = False
-
-        for widget in self.widgets: widget.hide()
-
-    def show_all(self):
-        self.shown = True
-
-        for widget in self.widgets: widget.show()
+    def set_hidden(self, is_hidden):
+        self.set_shown(not is_hidden)
 
 
 class ColorSelectSlider(QSlider):
@@ -1119,6 +1204,10 @@ class AnnouncedTaskSetup(QFrame):
                                            callback=self.deleteLater)
 
         if task.delay >= 0:
+            hour, mins = divmod(task.delay, 60)
+            self.before_minutes_input.setText(f'{hour}:{"0" if mins < 10 else ""}{mins}'
+                                              if hour > 0 else str(task.delay))
+
             if not task.do_expire:
                 self.before_type_combo.setCurrentIndex(0) # за N минут
             else:
@@ -1126,7 +1215,6 @@ class AnnouncedTaskSetup(QFrame):
         else:
             self.before_type_combo.setCurrentIndex(2) # Если просрочено
 
-        self.before_minutes_input.setText(str(max(0, task.delay)))
         set_color_scheme(self.remove_button, 'red')
 
         layout = QHBoxLayout()
@@ -1164,10 +1252,18 @@ class AnnouncedTaskSetup(QFrame):
         ensure_time = self.before_type_combo.currentIndex() <= 1
 
         minutes = -1
+        text = self.before_minutes_input.text()
         try:
-            if ensure_time: minutes = int(self.before_minutes_input.text())
+            if ensure_time:
+                if ":" in text:
+                    hour, mins = map(int, text.split(":"))
+                    minutes = hour * 60 + mins
+                else:
+                    minutes = int(text)
         except ValueError:
             raise AssertionError('Укажи кол-во минут перед задачей')
+        except:
+            raise AssertionError(f'Не верный формат времени перед задачей - "{text}", hh:mm')
 
         self.task.delay     = minutes
         self.task.do_expire = on_expire
@@ -1198,6 +1294,10 @@ class AnnouncedParameter(QFrame):
         self.setFixedHeight(60)
         self.setLayout(layout)
 
+# 2. Диско дз
+# 3. Турнир мечи
+
+# 5. НГ
 
 class EventSelector(QFrame):
     def __init__(self, parent):
@@ -1240,22 +1340,44 @@ class EventSelector(QFrame):
         self.setLayout(self.main_layout)
         self.setFixedSize(300, 500)
 
-    # noinspection PyUnresolvedReferences
     def set_events(self, events: list[ScheduleEvent]):
         for i in range(self.events_layout.count()):
             w = self.events_layout.itemAt(i).widget()
+            if w is None: continue
             w.deleteLater()
 
-        for event in sorted(events, key=lambda e: e.date.get_sort_value() + e.times * 10000):
-            btn = EventButton(event)
+        # noinspection PyUnresolvedReferences
+        def on_click_edit(button: EventButton):
+            self.app.create_task_add_form(button.event)
+            self.setHidden(True)
 
-            # noinspection PyUnresolvedReferences
-            def on_click(button: EventButton):
-                self.app.create_task_add_form(button.event)
-                self.setHidden(True)
+        all_sorted = sorted(((e, e.get_next_date(datetime.now().date())[0]) for e in events),
+                            key=lambda x: x[0].get_sort_value() if x[1] is None else x[1].timestamp())
 
-            btn.set_on_click(on_click)
-            self.events_layout.addWidget(btn)
+        for i, (name, is_hidden, is_expired) in enumerate([
+            ["Основные", False, False],
+            ["Истёкшие", False, True ],
+            ["Скрытые",  True,  None ]
+        ]):
+            widgets = []
+            for event, date in all_sorted:
+                if is_hidden  is not None  and  is_hidden  ^ (Tags.HIDDEN.YES in event.tags): continue
+                if is_expired is not None  and  is_expired ^ (date is None): continue
+
+                btn = EventButton(event, callback=on_click_edit)
+                widgets.append(btn)
+
+            if not widgets: continue
+
+            spoiler = SpoilerOptions(name, collapsed= i != 0)
+            self.events_layout.addWidget(spoiler)
+
+            for widget in widgets: self.events_layout.addWidget(widget)
+
+            spoiler.set_widgets(widgets)
+            self.events_layout.addWidget(new_separator(h=3))
+
+        self.events_layout.addStretch(0)
 
         self.events_scroll.verticalScrollBar().setValue(0)
         self.setVisible(True)
@@ -1343,9 +1465,11 @@ class UpcomingEvents(QFrame):
             w = self.events_layout.itemAt(i).widget()
             w.deleteLater()
 
+        # noinspection PyUnresolvedReferences
+        now = self.app.get_now()
         def tracking(event: ScheduleEvent):
-            # noinspection PyUnresolvedReferences
-            if event.get_next_date(self.app.get_now()) is None: return False
+            start_date, end_date = event.get_next_date(now)
+            if start_date is None or now > end_date: return False
             if event.tags.have(Tags.TRACKING.NO): return False
 
             if event.tags.have(Tags.IMPORTANT.YES): return True
@@ -1353,9 +1477,8 @@ class UpcomingEvents(QFrame):
 
             return False
 
-        # noinspection PyUnresolvedReferences
         sorted_events = sorted(
-            ((event, event.get_next_date(self.app.get_now())) for event in events if tracking(event)),
+            ((event, event.get_next_date(now)[0]) for event in events if tracking(event)),
             key=lambda x: x[1])
 
         if not sorted_events:
@@ -1363,8 +1486,8 @@ class UpcomingEvents(QFrame):
         self.setVisible(True)
 
         prev_date = None
-        for i, (event, next_date) in enumerate(sorted_events):
-            if next_date is None: continue
+        for i, (event, start_date) in enumerate(sorted_events):
+            if start_date is None: continue
             btn = EventButton(event, second_label=True)
             btn.set_on_click_editor(self.app)
 
@@ -1374,10 +1497,10 @@ class UpcomingEvents(QFrame):
                 btn.setFixedHeight(70)
                 self.sub_layout.addWidget(btn)
             else:
-                if prev_date != next_date.date() and prev_date is not None:
+                if prev_date != start_date.date() and prev_date is not None:
                     self.events_layout.addWidget(new_separator(h=4))
                 self.events_layout.addWidget(btn)
-                prev_date = next_date.date()
+                prev_date = start_date.date()
 
         self.update_timers()
 
@@ -1393,27 +1516,30 @@ class UpcomingEvents(QFrame):
             event: ScheduleEvent
             button: EventButton
 
-            next_date = event.get_next_date(now)
-            if next_date is None: return self.update_events(self.events.copy())
+            start_date, end_date = event.get_next_date(now)
+            if start_date is None or now > end_date: return self.update_events(self.events.copy())
+
+            minutes = ceil((start_date - now).total_seconds() / 60)
 
             prefix = "" if i == 0 else "Остаётся: "
-            subtitle = f'{prefix}{beauty_time(ceil((next_date - now).total_seconds() / 60))}'
+            subtitle = f'{prefix}{beauty_time(minutes)}' if minutes > 0 else "Сейчас"
 
             button.lb_subtitle.setText(subtitle)
 
-            if i == 0: first_day = next_date
+            if i == 0: first_day = start_date
             else:
-                if next_date.date() == first_day.date():
+                if start_date.date() == first_day.date():
                     more_events += 1
 
         if more_events > 0:
+            minutes = ceil((first_day - now).total_seconds() / 60)
             self.events_buttons[0].lb_subtitle.setText(
-                f'{beauty_time(ceil((first_day - now).total_seconds() / 60))} (+{more_events})'
+                f'{beauty_time(minutes) if minutes > 0 else "Сейчас"} (+{more_events})'
             )
 
 
 class EventButton(QPushButton):
-    def __init__(self, event: ScheduleEvent, override_important=None, second_label=False):
+    def __init__(self, event: ScheduleEvent, override_important=None, second_label=False, callback=None):
         super().__init__()
 
         self.lb_title = QLabel(f'<div style="line-height: 0.9;">{event.name}</div>')
@@ -1454,6 +1580,9 @@ class EventButton(QPushButton):
             # noinspection PyUnresolvedReferences
             self.timer.timeout.connect(self.next_frame)
             self.timer.start(1000 // 60)
+
+        if callback:
+            self.set_on_click(callback)
 
     def paintEvent(self, a0):
         super().paintEvent(a0)

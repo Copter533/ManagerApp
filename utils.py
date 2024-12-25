@@ -6,6 +6,7 @@ import traceback
 from collections.abc import Iterable
 from datetime import datetime, timedelta, date
 from random import uniform
+from time import time
 
 from announced_task import AnnouncedTask
 from tags import TagList, Tags
@@ -65,6 +66,15 @@ def datetime_to_str(when: datetime):
 def str_to_datetime(when: str):
     return datetime(*map(int, when.split('.')))
 
+class DebugTimer:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.st = time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f'Time for "{self.name}" - {time() - self.st:.2f}s')
 
 class MultiDate:
     def __init__(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
@@ -344,7 +354,12 @@ class ScheduleEvent:
     def get_timestamps(self, when: date = datetime.now()):
         return self.date.get_timestamps(when)
 
-    def get_next_date(self, now=datetime.now(), scope=365, same_day=False):
+    def get_sort_value(self, when=None):
+        return self.date.get_sort_value(when) + self.times * 10000
+
+    def get_next_date(self, now: [datetime | date], scope=365, same_day=False):
+        if isinstance(now, date): now = datetime(now.year, now.month, now.day)
+
         times = self.times
         from_index = 0 if self.times == 0 else (now - self.anchor_date).days
         for i in range(-from_index, scope):
@@ -355,26 +370,33 @@ class ScheduleEvent:
             if same_day: stamps = [[stamps[0][0], stamps[-1][-1]]]
 
             if self.times != 0:
-                if times == 0: return None
+                if times == 0: return None, None
                 times -= 1
 
             for stamp in stamps:
-                h, m = divmod(stamp[0], 60)
+                h1, m1 = divmod(stamp[0], 60)
+                h2, m2 = divmod(stamp[1], 60) if stamp[1] != 24 * 60 else (23, 59)
                 next_date = datetime(
                     iterator.year,
                     iterator.month,
                     iterator.day,
-                    h,
-                    m
+                    h1,
+                    m1
                 )
                 if next_date + timedelta(minutes=stamp[1] - stamp[0]) < now: continue
-                return next_date
-        return None
+                return next_date, datetime(
+                    iterator.year,
+                    iterator.month,
+                    iterator.day,
+                    h2,
+                    m2
+                )
+        return None, None
 
     def exec_announced(self, now=datetime.now(), scope=365):
         if not self.tasks: return
 
-        next_date = self.get_next_date(now, scope, same_day=True)
+        next_date, _ = self.get_next_date(now, scope, same_day=True)
         if next_date is None: return
 
         executed_minutes = None

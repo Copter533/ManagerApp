@@ -47,6 +47,11 @@ class Tags:
         YES = Tag("Да",  'green')
         NO  = Tag("Нет", 'red')
 
+    class HIDDEN:
+        name = "Скрытое"
+        YES = Tag("Да",  'green')
+        NO  = Tag("Нет", 'red')
+
     class _UniversalTag:
         name: str
 

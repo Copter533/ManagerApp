@@ -1,5 +1,6 @@
 import calendar
 import os
+import re
 import sys
 import traceback
 from datetime import datetime, timedelta, date
@@ -9,21 +10,21 @@ from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QP
 from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
-    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu, QComboBox
+    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu
 
-from announced_task import AnnouncedTask
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
-    EventSelector, simple_text_input, simple_tray_action, recolor_icon, SpoilerOptions, draw_arrow, \
-    paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup
+    EventSelector, simple_text_input, simple_tray_action, recolor_icon, draw_arrow, \
+    paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup, framed_ui, set_size_prop, \
+    SingleInstanceApplication, sidebars_ui
 from tags import Tags, TagList
 from utils import months, days_of_week, ScheduleEvent, MultiDate, rgb_to_hex, Config, str_time, log_error, \
-    beauty_time
+    beauty_time, DebugTimer
 
 
 class ScheduleEventView(QFrame):
-    def __init__(self, parent, app, event: ScheduleEvent, stamp: dict, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, parent, app, event: ScheduleEvent, stamp: dict):
+        super().__init__()
         self.setParent(parent)
         app: MainWindow
         parent: TimeColumnView
@@ -198,7 +199,13 @@ class ScheduleEventView(QFrame):
 
     def create_ui_title(self):
         lb = QLabel()
-        lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>')
+        if self.app.loaded or re.fullmatch(r"[a-zа-яё0-9 ]*", self.name, re.IGNORECASE):
+            lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>')
+        else:
+            # Эмодзи сжирают время при загрузке, поэтому их подгружаем по позже
+            self._title_setter = QTimer()
+            self._title_setter.singleShot(1500, lambda: lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>'))
+
         lb.setFont(QFont(self.app.font_skolar, 20))
         lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lb.setWordWrap(True)
@@ -533,7 +540,7 @@ class TimeColumnView(QFrame):
         mid_x = self.width() // 2 - x_offset
         asleep = self.app.cfg.asleeps.get(str(self.now))
 
-        if asleep is None:
+        if asleep is None or self.min_hour * 60 < asleep < 20 * 60:
             painter.drawText(mid_x, y - 3, message)
         else:
             painter.drawText(mid_x, y - 23, message)
@@ -583,22 +590,54 @@ class TimeColumnView(QFrame):
 # ===============================
 
 
+class SettingsForm(QFrame):
+    def __init__(self, main_window):
+        super().__init__()
+
+        self.main_window: MainWindow = main_window
+        set_size_prop(app, self, 0.7, 0.6)
+
+        self.setWindowTitle("Настройки")
+        self.setStyleSheet("""
+            background-color: #E1E1E1;
+            color: #000000;
+        """)
+
+        self.main_layout = QHBoxLayout()
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self.main_layout)
+
+        self.side_layout = QVBoxLayout()
+        self.view_layout = QVBoxLayout()
+
+        self.side_frame = QFrame()
+        self.side_frame.setStyleSheet("background: #ddd; border-right: 5px solid black;")
+        self.side_frame.setFixedWidth(300)
+        self.side_frame.setLayout(self.side_layout)
+
+        self.main_layout.addWidget(self.side_frame)
+        self.main_layout.addLayout(self.view_layout)
+
+        for widget in sidebars_ui(self.side_layout, {
+            'Данные': [
+                [QVBoxLayout, self.create_info_ui]
+            ]
+        }): self.view_layout.addWidget(widget)
+
+    def create_info_ui(self, layout: QVBoxLayout):
+        layout.addWidget(simple_label("Быстродействие:", 30))
+
+
 class TaskForm(QFrame):
     def __init__(self, main_window, to_edit: ScheduleEvent = None, when = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        w, h = 0.4, 0.8
-
         self.main_window: MainWindow = main_window
 
         self.now = when or self.main_window.get_now()
-        self.edit_target = None if to_edit is None else to_edit.name
+        self.edit_target = None if to_edit is None else to_edit
 
-        size = app.primaryScreen().size()
-        self.setGeometry(
-            int(size.width() * (1-w)/2), int(size.height() * (1-h)/2),
-            int(size.width() * w),       int(size.height() * h)
-        )
+        set_size_prop(app, self, 0.4, 0.8)
         self.setWindowTitle("Добавление задачи" if to_edit is None else "Редактирование задачи")
         self.setStyleSheet("""
             background-color: #E1E1E1;
@@ -607,7 +646,7 @@ class TaskForm(QFrame):
         self.clicks = 0
 
         self.main_layout = QVBoxLayout()
-        for widget in self.framed_ui({
+        for widget in framed_ui(self, {
             'Имя и описание': [
                 [QVBoxLayout, self.create_ui_task_name],
                 [QVBoxLayout, self.create_ui_task_desc]
@@ -632,6 +671,7 @@ class TaskForm(QFrame):
             ]
         }):
             self.main_layout.addWidget(widget)
+
         self.main_layout.addStretch(0)
 
         if to_edit: self.load_task(to_edit)
@@ -775,39 +815,6 @@ class TaskForm(QFrame):
                 color: #eee;
             }}
         """)
-
-    def framed_ui(self, structure: dict):
-        for j, (spoiler_name, spoiler_options) in enumerate(structure.items()):
-            widgets = []
-            have_spoiler = not spoiler_name.startswith('-')
-            if have_spoiler:
-                spoiler = SpoilerOptions(spoiler_name)
-                yield spoiler
-
-            for i, (layout_type, ui_creator) in enumerate(spoiler_options):
-                fr = QFrame()
-                style = f"""
-                    background-color: {"#f4f4f4" if i % 2 else "#f9f9f9"};
-                """
-                radius = 5
-                if i == 0:
-                    style += f"border-top-left-radius:    {radius}px; border-top-right-radius:    {radius}px; "
-                if i == len(spoiler_options)-1:
-                    style += f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; "
-
-                fr.setStyleSheet(style)
-                layout: QHBoxLayout = layout_type()
-                ui_creator(layout)
-                layout.addStretch(0)
-                fr.setLayout(layout)
-
-                widgets.append(fr)
-                yield fr
-
-            if have_spoiler:
-                # noinspection PyUnboundLocalVariable
-                spoiler.setWidgets(widgets)
-                if j != 0: spoiler.hide_all()
 
     def create_ui_task_name(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Название задачи", 30))
@@ -1132,6 +1139,8 @@ class TaskForm(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self, debug=False, mock_time=False):
         super().__init__()
+
+        self.loaded = False
         self.cfg = Config.load()
 
         self.start_date = datetime.now()
@@ -1173,6 +1182,7 @@ class MainWindow(QMainWindow):
         self.hide_btn.setParent(self)
 
         self.events_list = EventSelector(self)
+
         self.create_tray()
 
         self.announce_timer = QTimer(self)
@@ -1187,6 +1197,7 @@ class MainWindow(QMainWindow):
             self.fell_asleep_timer.start(10_000)
 
         self.update_schedule_view()
+        self.loaded = True
 
     def get_now(self):
         if not self.mock_time: return datetime.now()
@@ -1214,7 +1225,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.setVisible(True)
 
         # noinspection PyUnresolvedReferences
-        self.tray_icon.activated.connect(self.show)
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
 
         tray_menu = QMenu()
 
@@ -1223,6 +1234,10 @@ class MainWindow(QMainWindow):
         tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
 
         self.tray_icon.setContextMenu(tray_menu)
+
+    def on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.show()
 
     def have_tray(self):
         return not self.tray_icon.icon().isNull()
@@ -1278,7 +1293,7 @@ class MainWindow(QMainWindow):
 
         self.btn_events_list = self.create_button("list.svg", callback=self.show_events_list)
 
-        button_layout.addWidget(self.create_button("gear.svg"))
+        button_layout.addWidget(self.create_button("gear.svg", callback=self.show_settings_menu))
         button_layout.addWidget(self.btn_events_list)
 
         button_layout.addWidget(self.create_button("telescope.svg", callback=self.zoom_button))
@@ -1335,6 +1350,10 @@ class MainWindow(QMainWindow):
 
         return button
 
+    def show_settings_menu(self):
+        self.settings = SettingsForm(self)
+        self.settings.show()
+
     def show_events_list(self):
         if self.events_list.isVisible():
             self.events_list.setHidden(True)
@@ -1373,7 +1392,7 @@ class MainWindow(QMainWindow):
                     "border: none;"
                 )
 
-            self.calendar_days_layout.addWidget(new_separator(3, 100))
+            self.calendar_days_layout.addWidget(new_separator(w=3, h=100))
 
             temp_frame = QFrame()
             temp_frame.setMinimumSize(0, 0)
@@ -1389,7 +1408,7 @@ class MainWindow(QMainWindow):
 
             counter += timedelta(1)
 
-        self.calendar_days_layout.addWidget(new_separator(3, 100))
+        self.calendar_days_layout.addWidget(new_separator(w=3, h=100))
 
     def calendar_set_style(self, i, frame: QFrame):
         css = {'border-top': '7px solid #22333333'}
@@ -1478,7 +1497,7 @@ class MainWindow(QMainWindow):
                 }
                 QPushButton:pressed {
                     background-color: #AAA;  /* Темнее при нажатии */
-                                }
+                }
             """)
 
         opacity_effect = QGraphicsOpacityEffect()
@@ -1493,8 +1512,10 @@ class MainWindow(QMainWindow):
         for event in self.scheduled_events:
             event.connect_app(self)
 
-        for column in self.time_columns:
-            column.update_views()
+
+        for i, column in enumerate(self.time_columns, start=1):
+            with DebugTimer(f"Update {i}"):
+                column.update_views()
 
         self.update_calendar()
 
@@ -1551,8 +1572,10 @@ class MainWindow(QMainWindow):
 
 try:
     if os.getcwd().endswith("output"): os.chdir("..")
-    app = QApplication(sys.argv)
-    window = MainWindow(**{k: True for k in sys.argv[1:]})
+    with DebugTimer("App creation"):
+        app = SingleInstanceApplication(sys.argv, unique_key="manager_app_homemade")
+    with DebugTimer("Window open"):
+        window = MainWindow(**{k: True for k in sys.argv[1:]})
     window.show()
     sys.exit(app.exec())
 except (SystemExit, KeyboardInterrupt): print("Системный выход")
