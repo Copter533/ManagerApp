@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from math import atan2, sin, cos, radians, ceil
 from typing import Type
 
@@ -10,12 +10,13 @@ from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontData
     QStandardItemModel
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMainWindow, QMessageBox
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMessageBox
 )
 
 from announced_task import AnnouncedTask
 from tags import Tags, Tag
-from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time
+from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time, all_periods, \
+    MultiDate
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -360,13 +361,11 @@ def sidebars_ui(sidebars: QVBoxLayout | QVBoxLayout, structure: dict[str, list[l
 
         for i, (layout_type, ui_creator) in enumerate(category_options):
             fr = QFrame()
-            layout = layout_type()
+            layout: QHBoxLayout = layout_type()
             ui_creator(layout)
             fr.setLayout(layout)
 
             yield fr
-
-
 
 def set_size_prop(app: QApplication, widget: QWidget, w, h):
     size = app.primaryScreen().size()
@@ -382,7 +381,8 @@ class SingleInstanceApplication(QApplication):
         self.shared_memory = QSharedMemory(unique_key)
         if self.shared_memory.attach():
             self.alert_other_instance()
-            sys.exit(0)
+            if not 'debug' in sys.argv[1:]:
+                sys.exit(0)
         else:
             if not self.shared_memory.create(1):
                 QMessageBox.critical(None, "Ошибка", "Не удалось создать уникальный маркер для приложения")
@@ -770,7 +770,6 @@ class DateSelector(QFrame):
         self.setParent(parent)
         self.parent = parent
         self.setObjectName("dateSelectorFrame")
-        self.setMinimumHeight(590)
 
         self.on_style  = """
             QPushButton {
@@ -809,18 +808,22 @@ class DateSelector(QFrame):
 
         self.deleted = False
 
-        self.selected_weekdays = []
+        self.selected_weekdays  = []
         self.selected_monthdays = []
-        self.selected_months = []
-        self.selected_years = []
+        self.selected_months    = []
+        self.selected_years     = []
+        self.selected_periods   = []
 
         self.weekdays_btns:  list[SlideButton] = []
         self.monthdays_btns: list[SlideButton] = []
         self.months_btns:    list[SlideButton] = []
         self.years_btns:     list[SlideButton] = []
+        self.periods_btns:   list[SlideButton] = []
 
         self.title = simple_label("Новое условие", 20, "Times New Roman")
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.needed_height = 120  # Высота заголовка
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.title)
@@ -831,8 +834,24 @@ class DateSelector(QFrame):
         self.create_ui_year_select()
         self.create_ui_weekparity()
         self.create_ui_time_select()
+        self.create_ui_period_select()
         self.layout.addStretch(0)
-        self.setLayout(self.layout)
+
+        self.short_desc_lb = simple_label("", 20)
+        self.short_desc_lb.setWordWrap(True)
+        self.short_desc_lb.setFixedWidth(380)
+        self.short_desc_lb.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.main_contents = QWidget()
+        self.main_contents.setLayout(self.layout)
+        self.main_contents.setHidden(True)
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.short_desc_lb)
+        main_layout.addWidget(self.main_contents)
+        self.setLayout(main_layout)
+
+        self.setFixedWidth(574)
 
         self.is_weekday = False
         self.set_to_weekday()
@@ -840,11 +859,45 @@ class DateSelector(QFrame):
         self.parity = 0
         self.change_week_parity(0)
 
-        self.delete_button = icon_button("remove.svg", 50, 70, 'red',
+        self.delete_button    = icon_button("remove.svg", 50, 70, 'red',
                                          callback=self.remove, parent=self)
 
-        self.clone_button  = icon_button("add.svg", 50, 70, 'blue',
+        self.clone_button     = icon_button("add.svg", 50, 70, 'blue',
                                          callback=self.clone_self, parent=self)
+
+        self.show_hide_button = icon_button("show.svg", 50, 70, 'green',
+                                        callback=self.toggle_visibility, parent=self)
+        self.visibility = True
+        self.toggle_visibility()
+
+    def toggle_visibility(self):
+        self.visibility = not self.visibility
+        self.update_shape()
+
+    def update_shape(self):
+        if self.visibility:
+            self.short_desc_lb.setVisible(False)
+            self.main_contents.setVisible(True)
+
+            self.show_hide_button.setIcon(recolor_icon("hide.svg", QColor(240, 240, 240)))
+
+            self.setMinimumHeight(self.needed_height)
+        else:
+            self.short_desc_lb.setVisible(True)
+            self.main_contents.setVisible(False)
+
+            self.show_hide_button.setIcon(recolor_icon("show.svg", QColor(240, 240, 240)))
+
+            d = MultiDate()
+            self.add_multidate_state(d)
+            self.short_desc_lb.setText(str(d))
+            self.short_desc_lb.setFont(QFont('Calibri', 20 if len(self.short_desc_lb.text()) < 30 else 17))
+
+            self.setMinimumHeight(70)
+
+        # noinspection PyUnresolvedReferences
+        self.parent.update_date_options()
+        self.parent.update()
 
     def remove(self):
         self.deleted = True
@@ -875,12 +928,13 @@ class DateSelector(QFrame):
         ]:
             for btn in btns: btn.setState(btn.value == compare)
 
-    def setup_values(self, weekdays, monthdays, months, years):
+    def setup_values(self, weekdays, monthdays, months, years, periods):
         for btns, compares in [
             [self.weekdays_btns,  weekdays],
             [self.monthdays_btns, monthdays],
             [self.months_btns,    months],
-            [self.years_btns,     years]
+            [self.years_btns,     years],
+            [self.periods_btns,   periods]
         ]:
             if compares is None: continue
             for btn in btns:
@@ -936,6 +990,17 @@ class DateSelector(QFrame):
         self.weekday_select_container.setHidden(True)
         self.monthday_select_container.setVisible(True)
 
+    def add_multidate_state(self, date: MultiDate):
+        date.add_state(
+            weekday  = self.selected_weekdays  if     self.is_weekday else None,
+            monthday = self.selected_monthdays if not self.is_weekday else None,
+            month    = self.selected_months,
+            year     = self.selected_years,
+            parity   = self.get_parity(),
+            time     = self.time_selector.get_timedur(),
+            periods  = self.selected_periods
+        )
+
     def create_ui_switch(self):
         layout = QHBoxLayout()
 
@@ -961,10 +1026,13 @@ class DateSelector(QFrame):
         layout.addStretch(0)
 
         self.layout.addLayout(layout)
+        self.needed_height += 60
 
     def create_ui_weekday_select(self):
         self.weekday_select_container = QWidget()
         self.weekday_select_container.setFixedHeight(150)
+        self.needed_height += 150
+
         layout = QHBoxLayout()
         for i, day in enumerate(days_of_week, start=1):
             btn = SlideButton(self, self.weekday_select_container, i, day, "calibri", 25, 70)
@@ -989,6 +1057,7 @@ class DateSelector(QFrame):
     def create_ui_monthday_select(self):
         self.monthday_select_container = QWidget()
         self.monthday_select_container.setFixedHeight(150)
+        # self.needed_height += 150
         layout = QGridLayout()
 
         for i in range(0, 31):
@@ -1013,6 +1082,8 @@ class DateSelector(QFrame):
     def create_ui_month_select(self):
         self.month_select_container = QWidget()
         self.month_select_container.setFixedHeight(110)
+        self.needed_height += 110
+
         layout = QGridLayout()
         for i, day in enumerate(months):
             btn = SlideButton(self, self.month_select_container, i+1, f'{day[3]}, {i+1}', "calibri", 17, None)
@@ -1037,6 +1108,7 @@ class DateSelector(QFrame):
     def create_ui_year_select(self):
         self.year_select_container = QWidget()
         self.year_select_container.setFixedHeight(50)
+        self.needed_height += 50
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1061,6 +1133,7 @@ class DateSelector(QFrame):
             layout.addWidget(btn)
 
         self.year_select_container.setLayout(layout)
+        self.layout.addWidget(new_separator(h=3))
         self.layout.addWidget(self.year_select_container)
 
     def create_ui_weekparity(self):
@@ -1077,18 +1150,58 @@ class DateSelector(QFrame):
         # noinspection PyUnresolvedReferences
         self.parity_button.clicked.connect(lambda : self.change_week_parity())
 
-        layout.addWidget(simple_label("Чётность недели - ", 30))
+        lb = simple_label("Чётность недели - ", 30)
+        layout.addWidget(lb)
         layout.addWidget(self.parity_button)
         layout.addStretch(0)
+
         self.layout.addLayout(layout)
+        self.needed_height += self.parity_button.height()
 
     def create_ui_time_select(self):
         self.time_selector = TimeSelector(8, 24)
+        self.needed_height += self.time_selector.height()
         self.layout.addWidget(self.time_selector)
+
+    def create_ui_period_select(self):
+        max_row = max((i.row for i in all_periods.values()))
+
+        self.period_select_container = QWidget()
+        self.period_select_container.setFixedHeight(50 * max_row)
+        self.needed_height += 50 * max_row
+
+        layout = QGridLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        rows = {}
+        for name, period in all_periods.items():
+            btn = SlideButton(self, self.period_select_container, name, f" {name} ", "calibri", 20, None)
+            btn.setFixedHeight(45)
+            self.periods_btns.append(btn)
+
+            def on_click(btn: SlideButton):
+                if btn.value in self.selected_periods:
+                    btn.setStyleSheet(self.off_style)
+                    self.selected_periods.remove(btn.value)
+                else:
+                    btn.setStyleSheet(self.on_style)
+                    self.selected_periods.append(btn.value)
+
+            btn.setOnClick(on_click)
+            btn.setStyleSheet(self.off_style)
+
+            rows[period.row] = rows.get(period.row, 0) + 1
+            layout.addWidget(btn, period.row, rows[period.row])
+
+        self.period_select_container.setLayout(layout)
+        self.layout.addWidget(new_separator(h=3))
+        self.layout.addWidget(self.period_select_container)
 
     def clone_self(self):
         clone = DateSelector(self.parent)
-        clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months, self.selected_years)
+        clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months,
+                           self.selected_years, self.selected_periods)
         clone.change_week_parity(self.parity)
 
         clone.time_selector.set_min(self.time_selector.min_value)
@@ -1104,7 +1217,7 @@ class DateSelector(QFrame):
         start_pos      = 11
         between_offset = 10
 
-        for btn in [self.delete_button, self.clone_button]:
+        for btn in [self.delete_button, self.clone_button, self.show_hide_button]:
             btn.move(self.width() - start_pos - btn.width(), 10)
             start_pos += btn.width() + between_offset
 
@@ -1294,10 +1407,6 @@ class AnnouncedParameter(QFrame):
         self.setFixedHeight(60)
         self.setLayout(layout)
 
-# 2. Диско дз
-# 3. Турнир мечи
-
-# 5. НГ
 
 class EventSelector(QFrame):
     def __init__(self, parent):
@@ -1384,7 +1493,7 @@ class EventSelector(QFrame):
 
 
 class UpcomingEvents(QFrame):
-    def __init__(self, parent):
+    def __init__(self, parent, is_hidden=False):
         super().__init__(parent)
         self.app = parent
 
@@ -1417,6 +1526,14 @@ class UpcomingEvents(QFrame):
 
         self.events:         list[ScheduleEvent] = []
         self.events_buttons: list[EventButton]   = []
+
+        self.hidden = not is_hidden
+        self.hide_btn = QPushButton()
+        self.hide_btn.setFixedSize(8, 90)
+        set_color_scheme(self.hide_btn, 'gray')
+        # noinspection PyUnresolvedReferences
+        self.hide_btn.clicked.connect(self.toggle_visibility)
+
         self.toggle_btn = icon_button(
             "up.svg", 0, 90, 'blue',
             callback=self.toggle_view
@@ -1424,16 +1541,18 @@ class UpcomingEvents(QFrame):
         self.toggle_btn.setFixedSize(50, 70)
 
         self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(0, 0, 10, 0)
 
         self.sub_layout = QHBoxLayout()
+        self.sub_layout.addWidget(self.hide_btn)
         self.sub_layout.addWidget(self.toggle_btn)
+        self.remove_from = 2
 
         self.main_layout.addLayout(self.sub_layout)
         self.main_layout.addWidget(self.events_scroll)
         self.main_layout.addStretch(0)
 
         self.setLayout(self.main_layout)
-        self.setFixedWidth(300)
 
         self.timer = QTimer(self)
         # noinspection PyUnresolvedReferences
@@ -1441,6 +1560,21 @@ class UpcomingEvents(QFrame):
         self.timer.start(1000)
 
         self.toggle_view()
+        self.toggle_visibility()
+
+    def toggle_visibility(self):
+        self.hidden = not self.hidden
+        if self.hidden and not self.collapsed: self.toggle_view()
+
+        self.setFixedWidth(30 if self.hidden else 300)
+        self.hide_btn.setFixedWidth(20 if self.hidden else 8)
+        for i in range(1, self.sub_layout.count()):
+            w = self.sub_layout.itemAt(i).widget()
+            w.setHidden(self.hidden)
+
+        if self.app.loaded:
+            self.app.cfg.save(upcoming_hidden=self.hidden)
+            self.app.resizeEvent(None)
 
     def toggle_view(self):
         self.collapsed = not self.collapsed
@@ -1457,7 +1591,7 @@ class UpcomingEvents(QFrame):
         self.events.clear()
         self.events_buttons.clear()
 
-        for i in range(1, self.sub_layout.count()):
+        for i in range(self.remove_from, self.sub_layout.count()):
             w = self.sub_layout.itemAt(i).widget()
             w.deleteLater()
 
@@ -1473,6 +1607,9 @@ class UpcomingEvents(QFrame):
             if event.tags.have(Tags.TRACKING.NO): return False
 
             if event.tags.have(Tags.IMPORTANT.YES): return True
+
+            if start_date - now > timedelta(days=31): return False
+
             if event.tags.have(Tags.TRACKING.YES):  return True
 
             return False
@@ -1495,6 +1632,7 @@ class UpcomingEvents(QFrame):
             self.events_buttons.append(btn)
             if i == 0:
                 btn.setFixedHeight(70)
+                if self.hidden: btn.setHidden(True)
                 self.sub_layout.addWidget(btn)
             else:
                 if prev_date != start_date.date() and prev_date is not None:

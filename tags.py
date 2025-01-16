@@ -80,9 +80,11 @@ class TagList:
         return bool(self._container)
 
     def add(self, tag: Tag):
+        assert isinstance(tag, Tag)
         self._container[tag.group.name] = tag
 
     def have(self, item: Tag):
+        assert isinstance(item, Tag)
         return item in self._container.values()
 
     def get(self, group):

@@ -76,6 +76,43 @@ class DebugTimer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         print(f'Time for "{self.name}" - {time() - self.st:.2f}s')
 
+class DisplayModes:
+    FIELD = "Поле"
+    LIST  = "Список"
+
+    _iterate = [FIELD, LIST]
+
+    @staticmethod
+    def check(val): return val in DisplayModes._iterate
+
+    @staticmethod
+    def cycle(curr, offset=1):
+        i, l = DisplayModes._iterate.index(curr) + offset, len(DisplayModes._iterate)
+        if i < 0: i += l
+        return DisplayModes._iterate[i % l]
+
+class TimePeriod:
+    def __init__(self, from_: datetime, to: datetime, row = 1):
+        self.from_ = from_
+        self.to = to
+
+        self.row = row # Для отображения
+
+    def match(self, check: datetime):
+        return self.from_ <= check <= self.to
+
+    @staticmethod
+    def match_any(periods, check: datetime):
+        for period in periods:
+            if period.match(check): return True
+        return False
+
+    @staticmethod
+    def match_all(periods, check: datetime):
+        for period in periods:
+            if not period.match(check): return False
+        return True
+
 class MultiDate:
     def __init__(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
         self._states = []
@@ -90,7 +127,7 @@ class MultiDate:
             parity   = parity
         )
 
-    def add_state(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
+    def add_state(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None, periods=None):
         assert weekday is None or monthday is None, 'Нельзя указать и день месяца и день недели одновременно'
         assert time, 'Обязательно нужно указать время'
 
@@ -110,7 +147,8 @@ class MultiDate:
             "dayM": self.check_number_plus(monthday),
             "mon":  self.check_number_plus(month),
             "year": self.check_number_plus(year),
-            "time": self.time_str_to_stamp(time) if isinstance(time, str) else time
+            "time": self.time_str_to_stamp(time) if isinstance(time, str) else time,
+            "periods": periods if isinstance(periods, list) else list(periods or [])
         }.items() if v is not None}
 
         assert tuple(state.keys()) != ('time',), 'Помимо времени нужно ещё что-то указать'
@@ -149,7 +187,8 @@ class MultiDate:
                 monthday = data.get('dayM'),
                 month    = data.get('mon'),
                 year     = data.get('year'),
-                time     = data.get('time')
+                time     = data.get('time'),
+                periods  = data.get('periods')
             )
         res._states.sort(key=cls.get_sort_value_for_state)
         return res
@@ -173,14 +212,21 @@ class MultiDate:
     @staticmethod
     def time_stamp_to_str(stamp: list[int], mid="-"):
         if stamp is None: return None
+        if isinstance(stamp, str): return stamp
         h1, m1 = map(int, divmod(stamp[0], 60))
         h2, m2 = map(int, divmod(stamp[1], 60))
         return f'{h1}:{"0" if m1 < 10 else ""}{m1}{mid}{h2}:{"0" if m2 < 10 else ""}{m2}'
 
     @staticmethod
     def match(state, target_state: dict):
+        if state.get('periods') and not TimePeriod.match_any(
+                [all_periods[period_name] for period_name in state['periods']],
+                datetime(target_state['year'], target_state['mon'], target_state['dayM'])
+        ):
+            return False
+
         for k, v in state.items():
-            if v is None or k == 'time': continue
+            if v is None or k in ('time', 'periods'): continue
             if isinstance(v, int  ) and target_state[k] == v: continue
             if isinstance(v, tuple) and target_state[k] in v: continue
             return False
@@ -238,8 +284,9 @@ class MultiDate:
         dayM   = MultiDate.tuple_range_to_str(state.get('dayM'))
         dayW   = MultiDate.tuple_range_to_str(state.get('dayW'),
                                               replacer=lambda x: days_of_week[x-1])
-        mon    = state.get('mon')
-        parity = state.get('parity')
+        mon     = state.get('mon')
+        parity  = state.get('parity')
+        periods = state.get('periods')
 
         if dayM and mon:
             res += f'{dayM} {MultiDate.tuple_range_to_str(mon, replacer=lambda x: months[x-1][0])}, ' # 1 апреля
@@ -254,7 +301,9 @@ class MultiDate:
         if parity == 0: parity_str = ", по чётным неделям"
         if parity == 1: parity_str = ", по нечётным неделям"
 
-        return res + MultiDate.time_stamp_to_str(time, " - ") + parity_str
+        periods_str = f" во время {', '.join(periods)}" if periods else ""
+
+        return (res or "Все дни ") + MultiDate.time_stamp_to_str(time, " - ") + parity_str + periods_str
 
     def __str__(self):
         if len(self._states) == 0:
@@ -262,7 +311,6 @@ class MultiDate:
         if len(self._states) == 1:
             return self.str_state(self._states[0])
         return 'Будет:\n'+'\n'.join(map(self.str_state, self._states))
-
 
 class ScheduleEvent:
     def __init__(self, name, multi_date: MultiDate, description: str = None,
@@ -326,11 +374,6 @@ class ScheduleEvent:
 
     def can_occur(self, check_date: date | datetime):
         if isinstance(check_date, datetime): check_date = check_date.date()
-
-        # TODO: не хардкодить это
-        if self.tags.have(Tags.LABOR.LESSON) and\
-            date(check_date.year, 6, 1) <= check_date <= date(check_date.year, 8, 30):
-            return False
 
         if check_date in self.canceled_dates: return False
         if self.times == 0: return True
@@ -433,6 +476,11 @@ class Config:
 
         self.asleeps = obj.get('asleeps') or {}
 
+        self.upcoming_hidden = obj.get('upcoming_hidden') or False
+
+        self.disp_mode       = obj.get('disp_mode') or DisplayModes.FIELD
+        if not DisplayModes.check(self.disp_mode): self.disp_mode = DisplayModes.FIELD
+
     @classmethod
     def load(cls, file="schedule.json"):
         try:
@@ -455,19 +503,27 @@ class Config:
 
             return cls({}, file, [])
 
-    def save(self, events=None, y_view=None, view_scale=None, asleeps=None,
-             pretty=False):
-        if events:       self.events       = events
-        if y_view:       self.y_view       = y_view
-        if view_scale:   self.view_scale   = view_scale
-        if asleeps:      self.asleeps      = asleeps
+    def save(self, events=None, y_view=None, view_scale=None, asleeps=None, upcoming_hidden=None,
+                disp_mode=None,
+             pretty=True, to_file=True):
+        if events          is not None: self.events          = events
+        if y_view          is not None: self.y_view          = y_view
+        if view_scale      is not None: self.view_scale      = view_scale
+        if asleeps         is not None: self.asleeps         = asleeps
+        if upcoming_hidden is not None: self.upcoming_hidden = upcoming_hidden
+        if disp_mode       is not None: self.disp_mode       = disp_mode
+
+        if not to_file: return
 
         data = {
             'events': [], # Заполняется ниже
 
             'y_view':     self.y_view,
             'view_scale': self.view_scale,
-            'asleeps':    self.asleeps
+            'asleeps':    self.asleeps,
+
+            'upcoming_hidden': self.upcoming_hidden,
+            'disp_mode':       self.disp_mode
         }
         for event in self.events: data['events'].append(event.to_json())
 
@@ -510,6 +566,11 @@ def log_error():
 
         f.write("\n\n\n")
         traceback.print_tb(exc_traceback, file=f)
+
+all_periods = {
+    'Семестр 1': TimePeriod(datetime(2024, 9, 1), datetime(2024, 12, 29)),
+    'Сессия 1':  TimePeriod(datetime(2025, 1, 1), datetime(2025, 1, 31), 2)
+}
 
 if __name__ == '__main__':
     cfg = Config.load()

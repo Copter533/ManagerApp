@@ -19,7 +19,7 @@ from gui_additions import DateSelector, simple_label, icon_button, set_color_sch
     SingleInstanceApplication, sidebars_ui
 from tags import Tags, TagList
 from utils import months, days_of_week, ScheduleEvent, MultiDate, rgb_to_hex, Config, str_time, log_error, \
-    beauty_time, DebugTimer
+    beauty_time, DebugTimer, DisplayModes
 
 
 class ScheduleEventView(QFrame):
@@ -28,9 +28,6 @@ class ScheduleEventView(QFrame):
         self.setParent(parent)
         app: MainWindow
         parent: TimeColumnView
-
-        self.announce_time = 60 # в минутах
-        self.was_announced = False
 
         self.app: MainWindow = app
         self.now: date = parent.now
@@ -181,30 +178,20 @@ class ScheduleEventView(QFrame):
                 return False
         return True
 
-    def check_announce(self, now):
-        if self.was_announced: return False
-        if self.announce_time <= 0: return False
-
-        if self.stime - self.announce_time <= now.hour * 60 + now.minute <= self.etime:
-            return True
-
-        return False
-
-    def do_announce(self):
-        self.was_announced = True
-        self.app.tray_icon.showMessage(
-            f"{self._event.name}",
-            f"Начнётся через {beauty_time(self.announce_time)}!"
-        )
-
     def create_ui_title(self):
         lb = QLabel()
         if self.app.loaded or re.fullmatch(r"[a-zа-яё0-9 ]*", self.name, re.IGNORECASE):
             lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>')
         else:
+            def load():
+                try:
+                    lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>')
+                except:
+                    pass
+
             # Эмодзи сжирают время при загрузке, поэтому их подгружаем по позже
             self._title_setter = QTimer()
-            self._title_setter.singleShot(1500, lambda: lb.setText(f'<div style="line-height: 0.9;">{self.name}</div>'))
+            self._title_setter.singleShot(1500, load)
 
         lb.setFont(QFont(self.app.font_skolar, 20))
         lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -283,12 +270,36 @@ class ScheduleEventView(QFrame):
         p: TimeColumnView = self.parent()
 
         w = int(p.width() * .95)
-        y = int((self.stime / 60 - p.min_hour) * p.per_hour)
+        y1, y2, h = 0, 100, None
 
-        self.setGeometry((p.width() - w) // 2, y + p.margin, w, int((self.etime  / 60 - p.min_hour) * p.per_hour - y))
+        if self.app.display_mode == DisplayModes.FIELD:
+            y1 = (self.stime / 60 - p.min_hour) * p.per_hour
+            y2 = (self.etime / 60 - p.min_hour) * p.per_hour
+
+        elif self.app.display_mode == DisplayModes.LIST:
+            i = self.app.list_mode_match.get(self, 0)
+            max_no = self.app.list_mode_match.get("max_no", 1)
+
+            total_height = self.app.schedule_scroll.height()
+            y1 = i / max_no * total_height - 15
+            h = total_height / max_no - 15
+
+        self.setGeometry((p.width() - w) // 2, int(y1 + p.margin), w, int(h or y2 - y1))
 
         self.time_label.setText((" - " if w > 170 else "\n").join(self.time_texts))
-        self.time_label.setHidden(self.height() < 200)
+        if self.app.display_mode != DisplayModes.LIST:
+            self.time_label.setHidden(self.height() < 200)
+
+    def __hash__(self):
+        return hash(self.stime) + hash(self.etime) + hash(self.name)
+
+    def __eq__(self, other):
+        if not isinstance(other, ScheduleEventView): return False
+        return (
+            self._event == other._event and
+            self.stime  == other.stime  and
+            self.etime  == other.etime
+        )
 
 
 class TimeColumnView(QFrame):
@@ -303,6 +314,7 @@ class TimeColumnView(QFrame):
         self.original_now = now
         self.margin = 20
 
+        self.times = set()
         self.views: list[ScheduleEventView] = []
 
         self.is_free      = True
@@ -310,15 +322,13 @@ class TimeColumnView(QFrame):
 
         self.set_view_height(self.app.views_height)
 
-        self.setStyleSheet("background-color: #55EEEEEE;" if i % 2 else "background-color: #55DDDDDD;")
-
         self.timer = QTimer(self)
         # noinspection PyUnresolvedReferences
         self.timer.timeout.connect(self.update)
         self.timer.start(1 if self.app.mock_time else 1_000)
 
     def is_today(self):
-        return self.app.week_offset == 0 and self.i == self.app.get_now().weekday()
+        return self.app.get_now().date() == self.now
 
     def set_view_height(self, v: int):
         self.setFixedHeight(v)
@@ -326,7 +336,10 @@ class TimeColumnView(QFrame):
 
     def update_views(self):
         self.set_view_height(self.app.views_height)
-        self.now = self.original_now + timedelta(self.app.week_offset * 7)
+        self.now = self.original_now + timedelta(self.app.day_offset)
+        self.setStyleSheet(
+            "background-color: #55EEEEEE;" if self.now.weekday() % 2 else "background-color: #55DDDDDD;"
+        )
 
         for view in self.views:
             view.deleteLater()
@@ -372,16 +385,24 @@ class TimeColumnView(QFrame):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        self.paint_sleep_reminder() # self.blocked_hour
-        self.paint_timestamps()
 
-        if self.is_free: self.paint_no_tasks()
-        else:            self.paint_between_tasks()
+        if self.app.display_mode == DisplayModes.FIELD:
+            self.paint_sleep_reminder() # self.blocked_hour
+            self.paint_timestamps()
 
-        self.paint_current_time_line()
+            if self.is_free: self.paint_no_tasks()
+            else:            self.paint_between_tasks()
+
+            self.paint_current_time_line()
+
+        elif self.app.display_mode == DisplayModes.LIST:
+            pass
 
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
+        if self.app.display_mode in [DisplayModes.LIST]:
+            self.set_view_height(self.app.schedule_scroll.height() - 2)
+
         for event in self.views: event.resizeEvent(a0)
 
     def paint_timestamps(self):
@@ -502,13 +523,13 @@ class TimeColumnView(QFrame):
 
             min_time = min(min_time, stime)
 
-        if min_time == 99999: return
+        if min_time == 99999: return self.paint_no_sleep_reminder()
 
         self.set_painter_font(painter, size=20, bold=False)
 
         time_diff = min_time - time_needed
         if time_diff >= 0:
-            if time_diff > 4 * 60: return
+            if time_diff > 4 * 60: return self.paint_no_sleep_reminder()
             message = str_time(time_diff, leading_zero=True)
 
             time_diff = 24 * 60 - 10
@@ -519,8 +540,8 @@ class TimeColumnView(QFrame):
             message = str_time(time_diff, leading_zero=True)
             x_offset = 32
 
-            if time_diff < self.min_hour * 60: return
-            if time_diff > self.max_hour * 60: return
+            if time_diff < self.min_hour * 60: return self.paint_no_sleep_reminder()
+            if time_diff > self.max_hour * 60: return self.paint_no_sleep_reminder()
 
         if time_diff < 20 * 60:
             time_diff = 22 * 60
@@ -549,6 +570,19 @@ class TimeColumnView(QFrame):
             self.set_painter_font(painter, size=16, italic=True)
             painter.drawText(mid_x + 6, y - 4, str_time(asleep, leading_zero=True))
 
+    def paint_no_sleep_reminder(self):
+        asleep = self.app.cfg.asleeps.get(str(self.now))
+        if asleep is None: return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(100, 30, 30, 100), 2))
+        self.set_painter_font(painter, size=16, italic=True)
+
+        mid_x = self.width() // 2 - 32
+
+        painter.drawText(mid_x + 6, self.height() - 5, str_time(asleep, leading_zero=True))
+
     @staticmethod
     def set_painter_font(painter, size=None, bold=None, italic=None):
         font = painter.font()
@@ -558,16 +592,13 @@ class TimeColumnView(QFrame):
         painter.setFont(font)
 
     def paint_current_time_line(self):
-        i = self.app.get_now().weekday()
-
-        if abs(i - self.i) > 1: return
-        if self.app.week_offset != 0: return
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        now = self.app.get_now()
+        i_diff = (self.app.get_now().date() - self.now).days
+        if abs(i_diff) > 1: return
 
+        now = self.app.get_now()
         alpha = 50
         if   now.hour < self.min_hour: y = self.margin // 4
         elif now.hour > self.max_hour: y = self.height() - self.margin // 4
@@ -576,7 +607,7 @@ class TimeColumnView(QFrame):
             y = int(hours_from_start * self.per_hour) + self.margin
             alpha = 255
 
-        x1 = self.width() * (i - self.i)
+        x1 = self.width() * i_diff
         x2 = x1 + self.width()
 
         painter.setPen(QPen(QColor(255, 0, 0, alpha), 3))
@@ -619,13 +650,14 @@ class SettingsForm(QFrame):
         self.main_layout.addLayout(self.view_layout)
 
         for widget in sidebars_ui(self.side_layout, {
-            'Данные': [
+            'Общие': [
                 [QVBoxLayout, self.create_info_ui]
             ]
         }): self.view_layout.addWidget(widget)
 
     def create_info_ui(self, layout: QVBoxLayout):
-        layout.addWidget(simple_label("Быстродействие:", 30))
+        layout.addWidget(simple_label("Присылать уведомления:", 20))
+        layout.addWidget(simple_label("Периоды:", 30))
 
 
 class TaskForm(QFrame):
@@ -699,13 +731,15 @@ class TaskForm(QFrame):
         self.main_scroll.setFixedSize(self.width() - offset * 2, self.height() - offset * 2)
 
     def add_date_option(self, option=None):
+        if isinstance(option, DateSelector): option.update_shape()
         self.date_list_layout.addWidget(option or DateSelector(self))
         self.update_date_options()
 
     def update_date_options(self):
         all_selectors = tuple(self.get_all_date_selectors())
         if all_selectors:
-            self.date_scroll_area.setMinimumHeight(all_selectors[0].minimumHeight() + 5)
+            all_collapsed = all(map(lambda e: not e.visibility, all_selectors))  # all_selectors[0].minimumHeight()
+            self.date_scroll_area.setMinimumHeight(300 if all_collapsed else 715)
             for i, e in enumerate(all_selectors):
                 e.set_index(i)
         else:
@@ -815,6 +849,21 @@ class TaskForm(QFrame):
                 color: #eee;
             }}
         """)
+
+    def copy_color(self):
+        app.clipboard().setText(rgb_to_hex(QColor.fromHsv(*self.color_value).getRgb()))
+
+    def paste_color(self):
+        content = app.clipboard().text().strip("#")
+        if len(content) != 6: return
+
+        r = int(content[0:2], 16)
+        g = int(content[2:4], 16)
+        b = int(content[4:6], 16)
+
+        h, s, v, _ = QColor(r, g, b).getHsv()
+
+        self.update_color([h, s, v])
 
     def create_ui_task_name(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Название задачи", 30))
@@ -988,11 +1037,18 @@ class TaskForm(QFrame):
 
         self.update_color([randint(0, 360), randint(200, 255), randint(200, 255)])
 
+        sub_layout = QHBoxLayout()
+        sub_layout.addWidget(icon_button("pick.svg",  50, 70, 'yellow', icon_color=(0, 0, 0),
+                                         callback=self.copy_color))
+        sub_layout.addWidget(self.color_btn)
+        sub_layout.addWidget(icon_button("brush.svg", 50, 70, 'yellow', icon_color=(0, 0, 0),
+                                         callback=self.paste_color))
+
         layout.addWidget(simple_label("Выбор цвета", 35))
         layout.addLayout(l1)
         layout.addLayout(l2)
         layout.addLayout(l3)
-        layout.addWidget(self.color_btn)
+        layout.addLayout(sub_layout)
 
     def create_ui_finish_buttons(self, layout: QVBoxLayout):
         btns_layout = QHBoxLayout()
@@ -1032,7 +1088,8 @@ class TaskForm(QFrame):
 
             if state.get('dayM'): selector.set_to_monthday()
 
-            selector.setup_values(state.get('dayW'), state.get('dayM'), state.get('mon'), state.get('year'))
+            selector.setup_values(state.get('dayW'), state.get('dayM'), state.get('mon'),
+                                  state.get('year'), state.get('periods'))
             selector.set_parity(state.get('parity'))
 
             selector.time_selector.set_min(state['time'][0])
@@ -1068,15 +1125,7 @@ class TaskForm(QFrame):
 
         date = MultiDate()
         for e in self.get_all_date_selectors():
-            date.add_state(
-                weekday  = e.selected_weekdays  if     e.is_weekday else None,
-                monthday = e.selected_monthdays if not e.is_weekday else None,
-                month    = e.selected_months,
-                year     = e.selected_years,
-
-                parity = e.get_parity(),
-                time   = e.time_selector.get_timedur()
-            )
+            e.add_multidate_state(date)
 
         assert date.get_states(), 'Укажи временные промежутки!'
 
@@ -1126,6 +1175,7 @@ class TaskForm(QFrame):
             for button in widget.monthdays_btns: yield button
             for button in widget.months_btns:    yield button
             for button in widget.years_btns:     yield button
+            for button in widget.periods_btns:   yield button
 
     def mouseMoveEvent(self, a0):
         super().mouseMoveEvent(a0)
@@ -1135,6 +1185,11 @@ class TaskForm(QFrame):
         super().mouseReleaseEvent(a0)
         self.clicks = (self.clicks + 1) % 1_000_000
 
+    def keyPressEvent(self, a0):
+        k = a0.nativeVirtualKey()
+        if k == 13:  # ENTER
+            self.finish()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, debug=False, mock_time=False):
@@ -1142,6 +1197,9 @@ class MainWindow(QMainWindow):
 
         self.loaded = False
         self.cfg = Config.load()
+
+        self.display_mode = self.cfg.disp_mode
+        self.list_mode_match = {}
 
         self.start_date = datetime.now()
 
@@ -1153,7 +1211,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icons/app.svg"))
 
         self.font_skolar = load_font("Skolar PE Variable Regular.ttf")
-        self.week_offset = 0
+        self.day_offset = 0
 
         self.views_height = self.cfg.view_scale
 
@@ -1176,7 +1234,7 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(self.main_layout)
         self.setCentralWidget(central_widget)
 
-        self.upcoming_events = UpcomingEvents(self)
+        self.upcoming_events = UpcomingEvents(self, is_hidden=self.cfg.upcoming_hidden)
 
         self.hide_btn = self.create_button("hide.svg", icon_size=100, callback=self.toggle_toolbar)
         self.hide_btn.setParent(self)
@@ -1216,7 +1274,7 @@ class MainWindow(QMainWindow):
         minutes = now.time().hour * 60 + now.time().minute
 
         self.cfg.asleeps[str(day)] = minutes
-        self.cfg.save()
+        self.cfg.save(to_file=False)
 
     def create_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -1258,11 +1316,11 @@ class MainWindow(QMainWindow):
     def create_ui_schedule_view(self):
         self.schedule_view = QWidget()
         layout = QHBoxLayout(self.schedule_view)
-        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         now = self.get_now().date()
-        counter = now - timedelta(now.weekday() + self.week_offset * 7)
+        counter = now - timedelta(now.weekday() + self.day_offset)
 
         for i in range(7):
             fr = TimeColumnView(self, i, counter)
@@ -1296,12 +1354,12 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.create_button("gear.svg", callback=self.show_settings_menu))
         button_layout.addWidget(self.btn_events_list)
 
-        button_layout.addWidget(self.create_button("telescope.svg", callback=self.zoom_button))
+        button_layout.addWidget(self.create_button("telescope.svg", callback=self.display_cycle_button))
 
         button_layout.addWidget(self.create_button("add.svg", callback=self.create_task_add_form))
 
-        button_layout.addWidget(self.create_button("left.svg",  callback=self.prev_week))
-        button_layout.addWidget(self.create_button("right.svg", callback=self.next_week))
+        button_layout.addWidget(self.create_button("left.svg",  callback=lambda : self.change_day(-1)))
+        button_layout.addWidget(self.create_button("right.svg", callback=lambda : self.change_day(+1)))
 
         button_layout.addStretch()
 
@@ -1366,12 +1424,12 @@ class MainWindow(QMainWindow):
             w = self.calendar_days_layout.itemAt(i)
             w.widget().deleteLater()
 
-        now = self.get_now() + timedelta(self.week_offset * 7)
-        counter = now - timedelta(now.weekday())
+        now = self.get_now() + timedelta(self.day_offset)
+        counter = now - timedelta(days=3)
         self.calendar_labels: list[list[QFrame | QLabel | QLabel]] = []
 
-        for i, name in enumerate(days_of_week):
-            dayW_label = QLabel(name)
+        for i in range(7):
+            dayW_label = QLabel(days_of_week[counter.weekday()])
             dayM_label = QLabel(f'{counter.day} {months[counter.month-1][0]}')
 
             dayW_label.setFont(QFont(self.font_skolar, 50))
@@ -1385,9 +1443,8 @@ class MainWindow(QMainWindow):
                 day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 day_label.setFixedHeight(100)
 
-                col1 = '#990000' if self.time_columns[i].is_free and i >= 5 else 'black'
                 day_label.setStyleSheet(
-                    f"color: {col1};"
+                    f"color: black;"
                     f"background-color: transparent;"
                     "border: none;"
                 )
@@ -1404,17 +1461,17 @@ class MainWindow(QMainWindow):
             temp_frame.setLayout(temp_layout)
             self.calendar_days_layout.addWidget(temp_frame)
 
-            self.calendar_set_style(i, temp_frame)
+            self.calendar_set_style(counter.date(), i, temp_frame)
 
             counter += timedelta(1)
 
         self.calendar_days_layout.addWidget(new_separator(w=3, h=100))
 
-    def calendar_set_style(self, i, frame: QFrame):
+    def calendar_set_style(self, day: date, i, frame: QFrame):
         css = {'border-top': '7px solid #22333333'}
         have_important = self.time_columns[i].is_important
 
-        if i == self.get_now().weekday() and self.week_offset == 0:
+        if self.get_now().date() == day:
             css = {'background-color': '#440000ff', 'border-top': '7px solid #440000ff'}
             if have_important:
                 css = {'background-color': '#44ff0000', 'border-top': '10px solid #44ff0000'}
@@ -1424,21 +1481,21 @@ class MainWindow(QMainWindow):
 
         frame.setStyleSheet(''.join([f'{k}:{v};' for k, v in css.items()]))
 
-    def prev_week(self):
-        self.week_offset -= 1
+    def change_day(self, mul):
+        hold_shift = QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+        self.day_offset += (7 if hold_shift else 1) * mul
         self.update_schedule_view()
 
-    def next_week(self):
-        self.week_offset += 1
-        self.update_schedule_view()
-
-    def zoom_button(self):
+    def display_cycle_button(self):
         if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
-            self.update_zoom(+200)
+            self.display_mode = DisplayModes.cycle(self.display_mode, -1)
         else:
-            self.update_zoom(-200)
+            self.display_mode = DisplayModes.cycle(self.display_mode, +1)
+        self.cfg.save(disp_mode=self.display_mode)
+        self.update_schedule_view()
 
     def update_zoom(self, offset):
+        if self.display_mode not in [DisplayModes.FIELD]: return
         self.views_height = max(1000, min(3000, self.views_height + offset))
         self.update_schedule_view()
 
@@ -1506,18 +1563,37 @@ class MainWindow(QMainWindow):
         self.hide_btn.setIcon(QIcon(f"icons/{path}.svg"))
         self.events_list_update_pos()
 
+        QTimer().singleShot(1, lambda : self.resize_columns())
+
     def update_schedule_view(self):
         self.upcoming_events.update_events(self.scheduled_events)
 
         for event in self.scheduled_events:
             event.connect_app(self)
 
+        if self.display_mode == DisplayModes.LIST:
+            self.list_mode_match.clear()
+            self.update_columns(do_resize=False)
+            max_no = 0
+            for column in self.time_columns:
+                view_counter = 0
+                for view in sorted(column.views, key=lambda x: x.stime):
+                    self.list_mode_match[view] = view_counter
+                    max_no = max(max_no, view_counter)
+                    view_counter += 1
+            self.list_mode_match["max_no"] = max_no + 1
 
-        for i, column in enumerate(self.time_columns, start=1):
-            with DebugTimer(f"Update {i}"):
-                column.update_views()
-
+        self.update_columns()
         self.update_calendar()
+
+    def update_columns(self, do_resize=True):
+        for i, column in enumerate(self.time_columns, start=1):
+            column.update_views()
+            if do_resize: column.resizeEvent(None)
+
+    def resize_columns(self, a0=None):
+        for column in self.time_columns:
+            column.resizeEvent(a0)
 
     def events_list_update_pos(self):
         if self.events_list.isHidden(): return
@@ -1539,6 +1615,7 @@ class MainWindow(QMainWindow):
             )
 
     def resizeEvent(self, a0):
+        super().resizeEvent(a0)
         self.hide_btn.move(
             self.width()  - self.hide_btn.width()  - 10,
             self.height() - self.hide_btn.height() - 10
@@ -1546,9 +1623,11 @@ class MainWindow(QMainWindow):
         self.events_list_update_pos()
 
         self.upcoming_events.move(
-            self.width() - self.upcoming_events.width()  - 10,
+            self.width() - self.upcoming_events.width() - 10
+                + (25 if self.upcoming_events.hidden else 0),
             self.days_frame.height() + 10
         )
+        self.resize_columns()
 
     def closeEvent(self, a0):
         self.cfg.save(y_view=self.schedule_scroll.verticalScrollBar().value(),
@@ -1560,8 +1639,8 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, a0):
         k = a0.nativeVirtualKey()
 
-        if k == Qt.Key.Key_A: self.prev_week()
-        if k == Qt.Key.Key_D: self.next_week()
+        if k == Qt.Key.Key_A: self.change_day(-1)
+        if k == Qt.Key.Key_D: self.change_day(+1)
 
         if k == Qt.Key.Key_W: self.update_zoom(-200)
         if k == Qt.Key.Key_S: self.update_zoom(+200)
@@ -1571,6 +1650,7 @@ class MainWindow(QMainWindow):
 
 
 try:
+    print("Settings:", sys.argv[1:])
     if os.getcwd().endswith("output"): os.chdir("..")
     with DebugTimer("App creation"):
         app = SingleInstanceApplication(sys.argv, unique_key="manager_app_homemade")
