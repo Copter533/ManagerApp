@@ -55,6 +55,11 @@ def beauty_time(minutes: int):
 
     return res[:-1] if res else "Сейчас"
 
+def beauty_date(day: date):
+    return (f"{0 if day.day   < 10 else ''}{day.day}."
+            f"{0 if day.month < 10 else ''}{day.month}."
+            f"{day.year}")
+
 def interpolate(min_, max_, val):
     if val < 0: return min_
     if val > 1: return max_
@@ -65,6 +70,10 @@ def datetime_to_str(when: datetime):
 
 def str_to_datetime(when: str):
     return datetime(*map(int, when.split('.')))
+
+def is_main_window(check_object: object):
+    MainWindowClass = getattr(sys.modules['__main__'], 'MainWindow', None)
+    return isinstance(check_object, MainWindowClass)
 
 class DebugTimer:
     def __init__(self, name):
@@ -94,7 +103,7 @@ class DisplayModes:
 class TimePeriod:
     def __init__(self, from_: datetime, to: datetime, row = 1):
         self.from_ = from_
-        self.to = to
+        self.to    = to
 
         self.row = row # Для отображения
 
@@ -219,6 +228,12 @@ class MultiDate:
 
     @staticmethod
     def match(state, target_state: dict):
+        """
+        Не проверяет даты отмены и кол-во выполнений
+        :param state:
+        :param target_state:
+        :return:
+        """
         if state.get('periods') and not TimePeriod.match_any(
                 [all_periods[period_name] for period_name in state['periods']],
                 datetime(target_state['year'], target_state['mon'], target_state['dayM'])
@@ -394,13 +409,34 @@ class ScheduleEvent:
         if self.tags.get(Tags.LABOR) is None: return True
         return self.tags.get(Tags.LABOR) == other.tags.get(Tags.LABOR)
 
+    # Статический словарь с событиями, которые могут произойти.
+    # Первый сет - которые произойдут, второй - не произойдут
+    hashed_can_happen: dict[date, tuple[set, set]] = {}
+    def can_happen(self, day: date | datetime):
+        if isinstance(day, datetime): day = day.date()
+        if day in ScheduleEvent.hashed_can_happen:
+            true_set, false_set = ScheduleEvent.hashed_can_happen[day]
+            if self.name in true_set:  return True
+            if self.name in false_set: return False
+        else:
+            ScheduleEvent.hashed_can_happen[day] = (set(), set())
+
+        starts = self.get_next_date(day, 1, True)[0]
+        if starts is None:
+            ScheduleEvent.hashed_can_happen[day][1].add(self.name)
+            return False
+        else:
+            ScheduleEvent.hashed_can_happen[day][0].add(self.name)
+            return starts.date() == day
+
     def get_timestamps(self, when: date = datetime.now()):
         return self.date.get_timestamps(when)
 
     def get_sort_value(self, when=None):
         return self.date.get_sort_value(when) + self.times * 10000
 
-    def get_next_date(self, now: [datetime | date], scope=365, same_day=False):
+    def get_next_date(self, now: [datetime | date], scope=365, merge_time=False) \
+            -> tuple[datetime, datetime] | tuple[None, None]:
         if isinstance(now, date): now = datetime(now.year, now.month, now.day)
 
         times = self.times
@@ -410,7 +446,7 @@ class ScheduleEvent:
             stamps = self.get_timestamps(iterator)
             if not stamps: continue
 
-            if same_day: stamps = [[stamps[0][0], stamps[-1][-1]]]
+            if merge_time: stamps = [[stamps[0][0], stamps[-1][-1]]]
 
             if self.times != 0:
                 if times == 0: return None, None
@@ -439,7 +475,7 @@ class ScheduleEvent:
     def exec_announced(self, now=datetime.now(), scope=365):
         if not self.tasks: return
 
-        next_date, _ = self.get_next_date(now, scope, same_day=True)
+        next_date, _ = self.get_next_date(now, scope, merge_time=True)
         if next_date is None: return
 
         executed_minutes = None
@@ -465,7 +501,6 @@ class ScheduleEvent:
     def __str__(self):
         return f'Событие "{self.name}" ({self.date})'
 
-
 class Config:
     def __init__(self, obj: dict, file, events):
         self.file   = file
@@ -480,6 +515,8 @@ class Config:
 
         self.disp_mode       = obj.get('disp_mode') or DisplayModes.FIELD
         if not DisplayModes.check(self.disp_mode): self.disp_mode = DisplayModes.FIELD
+
+        self.app_killer_enable = True
 
     @classmethod
     def load(cls, file="schedule.json"):
@@ -568,8 +605,12 @@ def log_error():
         traceback.print_tb(exc_traceback, file=f)
 
 all_periods = {
-    'Семестр 1': TimePeriod(datetime(2024, 9, 1), datetime(2024, 12, 29)),
-    'Сессия 1':  TimePeriod(datetime(2025, 1, 1), datetime(2025, 1, 31), 2)
+    'Семестр 1':     TimePeriod(datetime(2024, 9, 1), datetime(2024, 12, 29), row=1),
+    'Сессия 1':      TimePeriod(datetime(2025, 1, 1), datetime(2025,  1, 31), row=2),
+    'Семестр 2':     TimePeriod(datetime(2025, 2, 4), datetime(2025,  5, 31), row=1),
+    'Сессия 2':      TimePeriod(datetime(2025, 6, 1), datetime(2025,  7, 30), row=2),
+    'Семестр 2 (2)': TimePeriod(datetime(2025, 2, 4), datetime(2025,  5, 31), row=1),
+    # 'Сессия 2 (2)':  TimePeriod(datetime(2025, 6, 1), datetime(2025,  7, 30), row=2),
 }
 
 if __name__ == '__main__':

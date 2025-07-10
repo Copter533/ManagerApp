@@ -1,22 +1,25 @@
 import json
+import json
+import math
 import os
 import sys
 from datetime import datetime, date, timedelta
 from math import atan2, sin, cos, radians, ceil
 from typing import Type
 
-from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory
+from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory, QRectF, QPointF
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction, QStandardItem, \
     QStandardItemModel
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
-    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMessageBox
+    QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMessageBox, QStyleOptionButton, QStyle,
+    QLayout, QBoxLayout
 )
 
 from announced_task import AnnouncedTask
 from tags import Tags, Tag
 from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time, all_periods, \
-    MultiDate
+    MultiDate, beauty_date, TimePeriod, is_main_window
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -166,11 +169,12 @@ def simple_combo_box(options, font_size, font="calibri", bold=False, italic=Fals
 
     return box
 
-def simple_tray_action(parent, name, callback=None):
+def simple_tray_action(parent, name, callback=None, enabled=True):
     action = QAction(name, parent)
 
     if callback: # noinspection PyUnresolvedReferences
         action.triggered.connect(callback)
+    action.setEnabled(enabled)
     return action
 
 def color_select_slider(text, size, min_, max_, callback=None, font="calibri"):
@@ -225,6 +229,11 @@ def new_separator(*, w=None, h=None, col="#000000"):
     separator.setStyleSheet(f"background-color: {col};")
     return separator
 
+def new_slash(size=20, color="black"):
+    slash = simple_label("/", size)
+    slash.setStyleSheet(f"color: {color}; border: none;")
+    return slash
+
 def ui_shadow(element):
     shadow_effect = QGraphicsDropShadowEffect()
     shadow_effect.setBlurRadius(5)
@@ -232,26 +241,26 @@ def ui_shadow(element):
     shadow_effect.setColor(QColor(0, 0, 0, 160))
     element.setGraphicsEffect(shadow_effect)
 
-def draw_arrow(painter: QPainter, length, arrow_angle, x1, y1, x2=None, y2=None, arrow1=True, arrow2=True):
+def draw_arrow(painter: QPainter, length, arrow_angle, x1, y1, x2=None, y2=None, arrow1=False, arrow2=True):
     if x2 is None: x2 = x1
     if y2 is None: y2 = y1
-    angle = atan2(y2 - y1, x2 - x1)
+    angle = -atan2(y2 - y1, x2 - x1)
 
-    painter.drawLine(x1, y1, x2, y2)
+    painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
     if arrow1:
-        painter.drawLine(x1, y1,
-                         int(x1 + cos(angle + radians(arrow_angle - 180)) * length),
-                         int(y1 - sin(angle + radians(arrow_angle - 180)) * length))
-        painter.drawLine(x1, y1,
-                         int(x1 + cos(angle - radians(arrow_angle - 180)) * length),
-                         int(y1 - sin(angle - radians(arrow_angle - 180)) * length))
+        painter.drawLine(QPointF(x1, y1),
+                         QPointF(x1 + cos(angle + radians(-arrow_angle)) * length,
+                                 y1 - sin(angle + radians(-arrow_angle)) * length))
+        painter.drawLine(QPointF(x1, y1),
+                         QPointF(x1 + cos(angle - radians(-arrow_angle)) * length,
+                                 y1 - sin(angle - radians(-arrow_angle)) * length))
     if arrow2:
-        painter.drawLine(x2, y2,
-                         int(x2 + cos(angle + radians(arrow_angle)) * length),
-                         int(y2 - sin(angle + radians(arrow_angle)) * length))
-        painter.drawLine(x2, y2,
-                         int(x2 + cos(angle - radians(arrow_angle)) * length),
-                         int(y2 - sin(angle - radians(arrow_angle)) * length))
+        painter.drawLine(QPointF(x2, y2),
+                         QPointF(x2 + cos(angle + radians(180 - arrow_angle)) * length,
+                                 y2 - sin(angle + radians(180 - arrow_angle)) * length))
+        painter.drawLine(QPointF(x2, y2),
+                         QPointF(x2 + cos(angle - radians(180 - arrow_angle)) * length,
+                                 y2 - sin(angle - radians(180 - arrow_angle)) * length))
 
 def paint_highlighted_border(widget: QWidget, frame, color: QColor = None, speed=100, narrow=False, margin=5):
     painter = QPainter(widget)
@@ -353,19 +362,60 @@ def framed_ui(parent, structure: dict[str, list[list[Type[QVBoxLayout] | Type[QV
             if j == 0:
                 spoiler.set_shown(True)
 
-def sidebars_ui(sidebars: QVBoxLayout | QVBoxLayout, structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
+def sidebars_layout(main_layout: QBoxLayout, side_width=300, title=None):
+    side_layout = QVBoxLayout()
+    view_layout = QVBoxLayout()
+
+    side_frame = QFrame()
+    side_frame.setObjectName("sideFrame")
+    side_frame.setStyleSheet("#sideFrame { background: #ddd; border-right: 5px solid black; }")
+    side_frame.setFixedWidth(side_width)
+    side_frame.setLayout(side_layout)
+
+    main_layout.setContentsMargins(0, 0,  0, 0)
+    side_layout.setContentsMargins(0, 0, 10, 0)
+    view_layout.setContentsMargins(0, 0,  0, 0)
+    main_layout.addWidget(side_frame)
+    main_layout.addLayout(view_layout)
+
+    if title: side_layout.addWidget(simple_label(title, 30))
+    return side_layout, view_layout
+
+
+def sidebars_ui(side_buttons: list | QVBoxLayout, opener,
+                structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
     for j, (category_name, category_options) in enumerate(structure.items()):
-        def on_click():
-            print("CLK")
-        sidebars.addWidget(simple_button(category_name, "calibri", 25, color_scheme='gray', callback=on_click))
+        def on_click(_, tab_name=category_name):
+            opener(tab_name)
+        side_buttons.append(simple_button(category_name, "calibri", 25, color_scheme='gray', callback=on_click))
+
+        scroll = QScrollArea()
+        scroll.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidgetResizable(True)
+        scroll.setObjectName("innerScroll")
+        scroll.setStyleSheet("""
+            #innerScroll {
+                border: 2px solid black;
+                background: white;
+            }
+        """)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        master_layout = QVBoxLayout()
 
         for i, (layout_type, ui_creator) in enumerate(category_options):
             fr = QFrame()
             layout: QHBoxLayout = layout_type()
             ui_creator(layout)
+            layout.setAlignment(Qt.AlignmentFlag.AlignTop)
             fr.setLayout(layout)
+            master_layout.addWidget(fr)
 
-            yield fr
+        w = QWidget()
+        w.setLayout(master_layout)
+        scroll.setWidget(w)
+        yield category_name, scroll
+
+    opener(tuple(structure.keys())[0])
 
 def set_size_prop(app: QApplication, widget: QWidget, w, h):
     size = app.primaryScreen().size()
@@ -373,6 +423,117 @@ def set_size_prop(app: QApplication, widget: QWidget, w, h):
         int(size.width() * (1 - w) / 2), int(size.height() * (1 - h) / 2),
         int(size.width() * w),           int(size.height() * h)
     )
+
+
+class InvalidSettingException(Exception):
+    def __init__(self, message: str, *widgets: QWidget):
+        self.message = message
+        self.widgets = widgets
+
+    def __str__(self):
+        return f'Ошибка в настройках - "{self.message}"'
+
+
+class ErrorArrowDrawer(QFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.setStyleSheet("""
+            border: 5px solid #ff000011;
+            border-radius: 15px;
+            background: transparent;
+        """)
+
+        self.arrows: list[SmoothArrow] = []
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        self.tick = 0
+        self.ticker = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.ticker.timeout.connect(self._tick_arrows)
+        self.ticker.start(60 // 1000)
+
+    def aim_to(self, from_point: QPoint, widgets: list[QWidget], mapping=None):
+        created_arrows = len(self.arrows)
+
+        for i, arrow in enumerate(self.arrows):
+            arrow.aim_to(from_point, widgets[i])
+            arrow.refresh()
+
+        for i in range(created_arrows, len(widgets)):
+            self.arrows.append(SmoothArrow(mapping, from_point, widgets[i]))
+
+    def _tick_arrows(self):
+        offset = 0
+        self.tick += 1
+        for raw_i in range(len(self.arrows)):
+            index = raw_i - offset
+            if self.arrows[index].can_remove():
+                self.arrows.pop(index)
+                offset += 1
+            else:
+                self.arrows[index].tick()
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        for arrow in self.arrows: arrow.draw(painter, 255, 0, 0)
+
+
+class SmoothArrow:
+    def __init__(self, mapping, origin: QPoint, target: QWidget, smoothness=0.02, decay_speed=2, lifetime=500):
+        self.aim_to(origin, target)
+        self.origin_inter = QPointF(origin)
+        self.target_inter = QPointF(origin)
+        self.mapping      = mapping
+
+        self.prev_targ_pos = None
+
+        self.lifetime     = lifetime
+        self.lifetime_max = lifetime
+        self.decay_speed  = decay_speed
+
+        self.smoothness  = smoothness
+        self.opacity     = 0
+        self.is_active   = True
+
+    def aim_to(self, origin: QPoint, target: QWidget):
+        self.origin_pos    = QPointF(origin)
+        self.target_widget = target
+
+    def refresh(self):
+        self.lifetime = self.lifetime_max
+        self.is_active = True
+
+    def can_remove(self):
+        return (not self.is_active) and (self.opacity == 0)
+
+    def tick(self):
+        target_pos = self.target_widget.mapTo(self.mapping, self.target_widget.pos()) + self.target_widget.rect().center()
+        self.origin_inter += (self.origin_pos     - self.origin_inter) * self.smoothness
+        self.target_inter += (QPointF(target_pos) - self.target_inter) * self.smoothness
+
+        if self.prev_targ_pos != target_pos:
+            self.refresh()
+        self.prev_targ_pos = target_pos
+
+        if self.is_active: self.opacity += self.decay_speed
+        else:              self.opacity -= self.decay_speed
+        self.opacity = max(0, min(255, self.opacity))
+
+        self.lifetime -= 1
+        if self.lifetime <= 0: self.is_active = False
+
+    def draw(self, painter: QPainter, r:int, g: int, b: int, width=5):
+        painter.setPen(QPen(QColor(r, g, b, self.opacity), width))
+        draw_arrow(painter, 20, 15,
+                   self.origin_inter.x(),
+                   self.origin_inter.y(),
+                   self.target_inter.x(),
+                   self.target_inter.y())
 
 
 class SingleInstanceApplication(QApplication):
@@ -823,13 +984,15 @@ class DateSelector(QFrame):
         self.title = simple_label("Новое условие", 20, "Times New Roman")
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        self.needed_height = 120  # Высота заголовка
+        self.needed_height = 140  # Высота заголовка
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.title)
+        self.layout.addSpacing(20)
         self.create_ui_switch()
         self.create_ui_weekday_select()
         self.create_ui_monthday_select()
+        self.create_ui_parityday_select()
         self.create_ui_month_select()
         self.create_ui_year_select()
         self.create_ui_weekparity()
@@ -976,9 +1139,11 @@ class DateSelector(QFrame):
 
         self.btn_weekday.setStyleSheet(self.on_style)
         self.btn_monthday.setStyleSheet(self.off_style)
+        self.btn_parityday.setStyleSheet(self.off_style)
 
         self.weekday_select_container.setVisible(True)
-        self.monthday_select_container.setHidden(True)
+        self.monthday_select_container.setVisible(False)
+        self.parityday_select_container.setVisible(False)
 
     def set_to_monthday(self):
         if not self.is_weekday: return
@@ -986,9 +1151,23 @@ class DateSelector(QFrame):
 
         self.btn_weekday.setStyleSheet(self.off_style)
         self.btn_monthday.setStyleSheet(self.on_style)
+        self.btn_parityday.setStyleSheet(self.off_style)
 
-        self.weekday_select_container.setHidden(True)
+        self.weekday_select_container.setVisible(False)
         self.monthday_select_container.setVisible(True)
+        self.parityday_select_container.setVisible(False)
+
+    def set_to_parityday(self):
+        # if not self.is_weekday: return
+        # self.is_weekday = False
+
+        self.btn_weekday.setStyleSheet(self.off_style)
+        self.btn_monthday.setStyleSheet(self.off_style)
+        self.btn_parityday.setStyleSheet(self.on_style)
+
+        self.weekday_select_container.setVisible(False)
+        self.monthday_select_container.setVisible(False)
+        self.parityday_select_container.setVisible(True)
 
     def add_multidate_state(self, date: MultiDate):
         date.add_state(
@@ -1004,21 +1183,23 @@ class DateSelector(QFrame):
     def create_ui_switch(self):
         layout = QHBoxLayout()
 
-        slash = simple_label("/", 20)
-        slash.setStyleSheet("color: black; border: none;")
-
         self.btn_weekday = simple_button(
             "День недели", "calibri", 15, None, 0, callback=self.set_to_weekday)
 
         self.btn_monthday = simple_button(
             "День месяца", "calibri", 15, None, 0, callback=self.set_to_monthday)
 
-        for btn in (self.btn_weekday, self.btn_monthday):
+        self.btn_parityday = simple_button(
+            "Раз через раз", "calibri", 15, None, 0, callback=self.set_to_parityday)
+
+        for btn in (self.btn_weekday, self.btn_monthday, self.btn_parityday):
             btn.setFixedSize(140, 40)
 
         layout.addWidget(self.btn_weekday)
-        layout.addWidget(slash)
+        layout.addWidget(new_slash())
         layout.addWidget(self.btn_monthday)
+        layout.addWidget(new_slash())
+        layout.addWidget(self.btn_parityday)
 
         layout.addWidget(icon_button("calendar.svg", 50, 60, 'yellow',
                                      callback=self.set_current_date, icon_color=(0, 0, 0)))
@@ -1078,6 +1259,37 @@ class DateSelector(QFrame):
 
         self.monthday_select_container.setLayout(layout)
         self.layout.addWidget(self.monthday_select_container)
+
+    def create_ui_parityday_select(self):
+        self.parityday_select_container = QWidget()
+        self.parityday_select_container.setFixedHeight(150)
+        # self.needed_height += 150
+        layout = QGridLayout()
+
+        # noinspection PyUnresolvedReferences
+        layout.addWidget(DaySelector(self.parent.main_window, "Якорь"), 1, 2)
+
+        layout.addWidget(simple_label("You", 20), 1, 1)
+        layout.addWidget(simple_label("been", 20), 2, 2)
+        layout.addWidget(simple_label("trolled", 20), 3, 3)
+        # for i in range(0, 31):
+        #     btn = SlideButton(self, self.monthday_select_container, i+1, i+1, "calibri", 15, 40)
+        #     self.monthdays_btns.append(btn)
+        #
+        #     def on_click(btn: SlideButton):
+        #         if btn.value in self.selected_monthdays:
+        #             btn.setStyleSheet(self.off_style)
+        #             self.selected_monthdays.remove(btn.value)
+        #         else:
+        #             btn.setStyleSheet(self.on_style)
+        #             self.selected_monthdays.append(btn.value)
+        #
+        #     btn.setOnClick(on_click)
+        #     btn.setStyleSheet(self.off_style)
+        #     layout.addWidget(btn, i // 11, i % 11)
+
+        self.parityday_select_container.setLayout(layout)
+        self.layout.addWidget(self.parityday_select_container)
 
     def create_ui_month_select(self):
         self.month_select_container = QWidget()
@@ -1220,6 +1432,286 @@ class DateSelector(QFrame):
         for btn in [self.delete_button, self.clone_button, self.show_hide_button]:
             btn.move(self.width() - start_pos - btn.width(), 10)
             start_pos += btn.width() + between_offset
+
+
+class TimePeriodSelector(QFrame):
+    def __init__(self, main_window, remove_function):
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        self.name_edit = simple_line_input("Название периода", 16)
+        layout.addWidget(self.name_edit, 4)
+
+        self.st_selector = DaySelector(main_window, "Начало")
+        self.en_selector = DaySelector(main_window, "Начало")
+
+        layout.addWidget(self.st_selector)
+        layout.addWidget(simple_label("-", 20))
+        layout.addWidget(self.en_selector)
+
+        self.btn_row_remove = icon_button("left.svg", 50, 70,  'gray',
+                                               callback=lambda: self.update_row(self.row - 1))
+        self.btn_row_add    = icon_button("right.svg", 50, 70, 'green',
+                                               callback=lambda: self.update_row(self.row + 1))
+        self.update_row(1)
+
+        delete_btn = icon_button(
+            "remove.svg", 30, 30, 'red',
+            callback=lambda : remove_function(self)
+        )
+        layout.addWidget(delete_btn)
+
+    def update_row(self, new_row):
+        self.row = max(1, new_row)
+        set_color_scheme(self.btn_row_remove, 'red' if self.row > 1 else 'gray')
+
+    def get_time_period(self):
+        if not self.name_edit.text(): raise InvalidSettingException("Укажи имя!", self.name_edit)
+        dates = [date(e.year, e.month, e.day) for e in (self.st_selector.get_date(), self.en_selector.get_date())]
+        if dates[0] > dates[1]:
+            raise InvalidSettingException("Дата конца раньше даты начала!", self.st_selector, self.en_selector)
+        return TimePeriod(*dates)
+
+
+class DaySelector(QFrame):
+    def __init__(self, main_window, placeholder="DD.MM.YYYY", font_size=15):
+        super().__init__()
+        font = QFont("calibri", font_size)
+
+        self.setFixedSize(170, 50)
+        self.setContentsMargins(0, 0, 0, 0)
+
+        self.layout = QHBoxLayout()
+
+        self.line_edit = QLineEdit()
+        self.line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.line_edit.setFont(font)
+        self.line_edit.setPlaceholderText(placeholder)
+        self.line_edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.edit_btn = icon_button("pick.svg", 30, 37, 'yellow',
+                                    icon_color=(0, 0, 0), callback=self.toggle_popup)
+
+        self.layout.addWidget(self.line_edit)
+        self.layout.addWidget(self.edit_btn)
+        self.setLayout(self.layout)
+
+        self.popup = CalendarPopup(self, self.line_edit, main_window=main_window)
+        self.popup.hide()
+
+    def get_date(self):
+        try:
+            day, month, year = map(int, self.line_edit.text().split('.'))
+            return date(year, month, day)
+        except:
+            raise InvalidSettingException("Неверная дата!", self.line_edit)
+
+    def toggle_popup(self):
+        self.update_popup_position()
+        self.popup.update_view()
+        self.popup.show()
+
+    def update_popup_position(self):
+        btn_global_pos = self.edit_btn.mapToGlobal(QPoint(0, self.edit_btn.height()))
+        screen_geo = self.screen().availableGeometry()
+
+        popup_width = self.popup.width()
+        popup_height = self.popup.height()
+
+        # Рассчитываем позицию по X
+        x = btn_global_pos.x()
+        if x + popup_width > screen_geo.right():
+            x = screen_geo.right() - popup_width
+        x = max(x, screen_geo.left())
+
+        # Рассчитываем позицию по Y
+        y = btn_global_pos.y()
+        if y + popup_height > screen_geo.bottom():
+            y = btn_global_pos.y() - popup_height - self.edit_btn.height()
+        y = max(y, screen_geo.top())
+
+        self.popup.move(int(x), int(y))
+
+
+class CalendarPopup(QFrame):
+    def __init__(self, parent, obj_to_edit: QWidget, pick_date: [datetime | date] = None, main_window=None):
+        super().__init__(parent)
+        if pick_date is None: pick_date = datetime.today()
+        self.pick_date = date(pick_date.year, pick_date.month, 1)
+
+        assert is_main_window(main_window), 'Должен быть класс главного окна'
+        self.main_window = main_window
+
+        self.obj_to_edit = obj_to_edit
+
+        self.setWindowFlags(Qt.WindowType.Popup)
+        self.setObjectName("calendarFrame")
+        self.setStyleSheet("""
+            QWidget {
+                background: white;
+            }
+            #calendarFrame {
+                border: 2px solid #000000;
+            }
+        """)
+        self.setFixedSize(250, 270)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(2, 2)
+        self.setGraphicsEffect(shadow)
+
+        main_layout = QVBoxLayout()
+
+        control_layout = QHBoxLayout()
+        self.month_year_label = simple_label("...", 18)
+        self.month_year_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        control_layout.addWidget(icon_button("left.svg",  30, 35, 'blue', callback=lambda : self.cycle(-1)))
+        control_layout.addWidget(self.month_year_label)
+        control_layout.addWidget(icon_button("right.svg", 30, 35, 'blue', callback=lambda : self.cycle(+1)))
+
+        main_layout.addLayout(control_layout)
+        self.setLayout(main_layout)
+
+        self.grid_layout = QGridLayout()
+        self.grid_layout.setHorizontalSpacing(2)
+        self.grid_layout.setVerticalSpacing(2)
+        main_layout.addLayout(self.grid_layout)
+
+        self.week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        for col, day in enumerate(self.week_days):
+            lbl = QPushButton(day)
+            lbl.setFixedSize(30, 30)
+            lbl.setStyleSheet(
+            """
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                    color: #666;
+                    font-weight: bold;
+                }
+            """)
+            lbl.setEnabled(False)
+            self.grid_layout.addWidget(lbl, 0, col)
+
+        self.day_buttons = []
+        # self.update_view()
+
+    def update_view(self):
+        for btn in self.day_buttons:
+            btn.deleteLater()
+        self.day_buttons.clear()
+
+        self.month_year_label.setText(
+            f"{months[self.pick_date.month - 1][2].capitalize()} {self.pick_date.year}"
+        )
+
+        from_day = self.pick_date - timedelta(days=self.pick_date.weekday())
+
+        for index in range(6*7):
+            day = from_day + timedelta(days=index)
+            is_current_month = day.month == self.pick_date.month
+
+            btn = SegmentedButton(day, is_today=day == date.today(), is_bold=is_current_month)
+
+            tooltips = []
+            colors = []
+            for event in self.main_window.scheduled_events:
+                event: ScheduleEvent
+                if not event.can_happen(day): continue
+                colors.append(QColor(*event.color))
+                tooltips.append(event.name)
+
+            if tooltips: btn.setToolTip("\n".join(tooltips))
+            btn.set_colors(colors)
+
+            # noinspection PyUnresolvedReferences
+            btn.clicked.connect(lambda _, d=day: self.date_selected(d))
+
+            self.grid_layout.addWidget(btn, *divmod(index + 7, 7))
+            self.day_buttons.append(btn)
+
+    def date_selected(self, day):
+        # noinspection PyUnresolvedReferences
+        self.obj_to_edit.setText(beauty_date(day))
+        self.hide()
+
+    def cycle(self, offset):
+        self.pick_date = self.pick_date.replace(month=self.pick_date.month + offset)
+        self.update_view()
+
+
+class SegmentedButton(QPushButton):
+    def __init__(self, day: date, is_today, is_bold, colors=None, parent=None):
+        super().__init__(str(day.day))
+        self.setParent(parent)
+        self.colors = colors or []
+        self.setFixedSize(30, 30)
+
+        self.is_today = is_today
+        self.is_bold = is_bold
+
+        self.setStyleSheet(
+        """
+            SegmentedButton {
+                border: 3px solid #0078d4;
+                border-radius: 5px;
+                background: rgba(0, 120, 212, 0.8);
+                color: black;
+                font-weight: bold;
+            }
+            SegmentedButton:hover {
+                background: rgba(0, 120, 212, 0.9);
+            }
+        """
+            if is_today else
+        f"""
+            SegmentedButton {{
+                border: {'1px solid #ccc' if is_bold else '1px solid #aaa'};
+                border-radius: 15px;
+                background: transparent;
+                color: black;
+                {'font-weight: bold;' if is_bold else ''}
+            }}
+            SegmentedButton:hover {{
+                background: rgba(0,0,0,0.1);
+            }}
+        """)
+
+    def set_colors(self, colors):
+        self.colors = colors
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.colors or self.is_today:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        offset = 2
+        rect = QRectF(offset, offset, self.width() - offset * 2, self.height() - offset * 2)
+
+        angle_offset = len(self.colors) * 45 - 45 if 1 <= len(self.colors) <= 2 else 0
+        angle = 360.0 / len(self.colors)
+
+        painter.setPen(QColor(0, 0, 0, 0))
+        for i, color in enumerate(self.colors):
+            color.setAlpha(120)
+            painter.setBrush(color)
+            painter.drawPie(rect, int(i * angle * 16 + angle_offset * 16), int(angle * 16))
+
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+
+        # Убираем фон у опции
+        opt.features &= ~QStyleOptionButton.ButtonFeature.Flat
+        opt.palette.setColor(self.backgroundRole(), Qt.GlobalColor.transparent)
+
+        # Рисуем стандартные элементы кнопки
+        self.style().drawControl(QStyle.ControlElement.CE_PushButton, opt, painter, self)
 
 
 class AnnouncedTaskSelect(QComboBox):

@@ -1,26 +1,29 @@
-import calendar
 import os
 import re
 import sys
+import calendar
 import traceback
+import threading
 from datetime import datetime, timedelta, date
 from random import randint
 
-from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRectF, QRect
-from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen
+from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRectF, QRect, QDate, QPointF
+from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen, QPaintDevice
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
-    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu
+    QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu, QTimeEdit, QDateEdit
+from sympy import Integer
 
+from app_killer import app_killer_thread
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
     new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
     EventSelector, simple_text_input, simple_tray_action, recolor_icon, draw_arrow, \
     paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup, framed_ui, set_size_prop, \
-    SingleInstanceApplication, sidebars_ui
+    SingleInstanceApplication, sidebars_ui, DaySelector, TimePeriodSelector, InvalidSettingException, ErrorArrowDrawer, \
+    sidebars_layout
 from tags import Tags, TagList
 from utils import months, days_of_week, ScheduleEvent, MultiDate, rgb_to_hex, Config, str_time, log_error, \
     beauty_time, DebugTimer, DisplayModes
-
 
 class ScheduleEventView(QFrame):
     def __init__(self, parent, app, event: ScheduleEvent, stamp: dict):
@@ -46,10 +49,10 @@ class ScheduleEventView(QFrame):
         self._highlight_speed = None
 
         self.bgr_renderer = None
-        if event.tags.have(Tags.WHERE.CRON):  self.set_background_icon("cron.svg")
-        if event.tags.have(Tags.WHERE.LOMO):  self.set_background_icon("lomo.svg")
-        if event.tags.have(Tags.WHERE.SPORT): self.set_background_icon("sword.svg")
-        if event.tags.have(Tags.WHERE.NOV):   self.set_background_icon("home.svg")
+
+        where = event.tags.get(Tags.WHERE)
+        if where:
+            self.set_background_icon(where.payload.get("icon"))
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -86,6 +89,8 @@ class ScheduleEventView(QFrame):
 
     def set_background_icon(self, path, scale=1.2, offset_x=60, offset_y=70):
         self.bgr_renderer = QSvgRenderer(f"icons/{path}")
+        if not self.bgr_renderer.isValid():
+            self.bgr_renderer = QSvgRenderer(f"icons/404.svg")
         svg_size = self.bgr_renderer.defaultSize()
         self.bgr_icon_width  = int(svg_size.width()  * scale)
         self.bgr_icon_height = int(svg_size.height() * scale)
@@ -499,6 +504,10 @@ class TimeColumnView(QFrame):
 
                 self.set_painter_font(painter, 11)
                 painter.drawText(x - 34, mid + 14, '+переезд')
+                if view1 is not None:
+                    painter.drawLine(
+                        QPointF(view2.x() + 10,                 view2.y() - self.per_hour),
+                        QPointF(view2.x() + view2.width() - 10, view2.y() - self.per_hour))
 
             self.set_painter_font(painter, 20)
             if same_place: painter.drawText(x - 25, mid + 9, timestr)
@@ -630,37 +639,169 @@ class SettingsForm(QFrame):
 
         self.setWindowTitle("Настройки")
         self.setStyleSheet("""
-            background-color: #E1E1E1;
-            color: #000000;
+            QWidget {
+                background-color: #E1E1E1;
+                color: #000000;
+            }
         """)
 
         self.main_layout = QHBoxLayout()
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.main_layout)
 
-        self.side_layout = QVBoxLayout()
-        self.view_layout = QVBoxLayout()
+        self.side_layout, self.view_layout = sidebars_layout(self.main_layout, title="Настройки")
 
-        self.side_frame = QFrame()
-        self.side_frame.setStyleSheet("background: #ddd; border-right: 5px solid black;")
-        self.side_frame.setFixedWidth(300)
-        self.side_frame.setLayout(self.side_layout)
-
-        self.main_layout.addWidget(self.side_frame)
-        self.main_layout.addLayout(self.view_layout)
-
-        for widget in sidebars_ui(self.side_layout, {
+        self.tabs = {}
+        self.side_buttons = []
+        for category_name, widget in sidebars_ui(self.side_buttons, self.open_tab, {
             'Общие': [
                 [QVBoxLayout, self.create_info_ui]
+            ],
+            'Тест': [
+                [QVBoxLayout, self.create_test_ui]
             ]
-        }): self.view_layout.addWidget(widget)
+        }):
+            self.tabs.setdefault(category_name, [])
+            self.tabs[category_name].append(widget)
+            self.view_layout.addWidget(widget)
+        self.open_tab(tuple(self.tabs.keys())[0])
+
+        for button in self.side_buttons:
+            self.side_layout.addWidget(button)
+
+        self.error_label = simple_label("", 20)
+        self.error_label.setStyleSheet("color: red")
+        self.error_label.setHidden(True)
+        self.error_label.setWordWrap(True)
+
+        self.test_lb = ErrorArrowDrawer(self)
+        self.test_lb.setGeometry(0, 0, 750, 100)
+        self.test_lb.raise_()
+
+        self.error_elements: list[QWidget] = []
+        self.error_styles = []
+
+        self.error_timer = QTimer(self)
+        # noinspection PyUnresolvedReferences
+        self.error_timer.timeout.connect(self.hide_error)
+
+        self.side_layout.addStretch(0)
+        self.side_layout.addWidget(self.error_label)
+        self.side_layout.addWidget(simple_button("Сохранить", "calibri", 20,
+                                                 color_scheme='green', callback=self.save_settings))
+        self.side_layout.addWidget(simple_button("Отмена",    "calibri", 20,
+                                                 color_scheme='red',   callback=self.close))
+
+    def open_tab(self, tab_name):
+        for button in self.side_buttons:
+            set_color_scheme(button, 'blue' if button.text() == tab_name else 'gray')
+
+        for category_name, elements in self.tabs.items():
+            for element in elements:
+                element.setVisible(category_name == tab_name)
+
+    def display_error(self, message):
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+        self.error_label.setFocus()
+
+        self.error_timer.stop()
+        self.error_timer.start(int(max(1000, min(5000, len(message) * 100))))
+
+        self.test_lb.aim_to(self.error_label.pos() + QPoint(self.error_label.width() // 2, -10),
+                            self.error_elements, self)
+
+    def hide_error(self):
+        self.error_label.setVisible(False)
+        self.error_elements.clear()
+
+    def save_settings(self):
+        try:
+            self.apply_changes(do_write=False)
+        except InvalidSettingException as invalid_setting:
+            widgets = invalid_setting.widgets
+            if not all(widget.isVisible() for widget in widgets):
+                for tab in self.tabs:
+                    self.open_tab(tab)
+                    if not all(widget.isVisible() for widget in widgets): continue
+                    # что мб будет
+                    break
+            self.error_elements = list(widgets)
+            self.display_error(invalid_setting.message)
+            print(invalid_setting)
+        else:
+            print("Looks good...")
+            self.apply_changes(do_write=True)
+
+    def apply_changes(self, do_write):
+        for row in self.period_rows:
+            row.get_time_period()
+            if do_write: print("Changes saved")
 
     def create_info_ui(self, layout: QVBoxLayout):
-        layout.addWidget(simple_label("Присылать уведомления:", 20))
         layout.addWidget(simple_label("Периоды:", 30))
 
+        self.periods_container = QWidget()
+        periods_main_layout = QVBoxLayout(self.periods_container)
+        periods_main_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.period_scroll = QScrollArea()
+        self.period_scroll.setWidgetResizable(True)
+        self.period_scroll.setStyleSheet("""
+            QScrollArea {
+                border: 2px solid black;
+                background: white;
+            }
+        """)
+        self.period_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.periods_widget = QWidget()
+        self.periods_layout = QVBoxLayout(self.periods_widget)
+        self.periods_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.periods_layout.setSpacing(2)
+        self.periods_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.period_scroll.setWidget(self.periods_widget)
+        periods_main_layout.addWidget(self.period_scroll)
+
+        self.add_btn = icon_button(
+            "add.svg", 50, 70, 'green',
+            callback=self.add_period_row
+        )
+        periods_main_layout.addWidget(self.add_btn, 0, Qt.AlignmentFlag.AlignRight)
+
+        layout.addWidget(self.periods_container)
+        self.period_rows: list[TimePeriodSelector] = []
+        self.add_period_row()
+
+    def create_test_ui(self, layout: QVBoxLayout):
+        for i in range(100):
+            layout.addWidget(simple_label("Секреты", 30))
+
+    def add_period_row(self):
+        selector = TimePeriodSelector(self.main_window, self.remove_period_row)
+        self.periods_layout.addWidget(selector)
+        self.period_rows.append(selector)
+
+    def remove_period_row(self, row_widget):
+        for i in reversed(range(self.periods_layout.count())):
+            widget = self.periods_layout.itemAt(i).widget()
+            if widget == row_widget:
+                widget.deleteLater()
+                self.period_rows = [r for r in self.period_rows if r != row_widget]
+                break
+
+    def resizeEvent(self, a0):
+        self.test_lb.setGeometry(0, 0, self.width(), self.height())
 
 class TaskForm(QFrame):
+    def open_tab(self, tab_name):
+        for button in self.side_buttons:
+            set_color_scheme(button, 'blue' if button.text() == tab_name else 'gray')
+
+        for category_name, elements in self.tabs.items():
+            for element in elements:
+                element.setVisible(category_name == tab_name)
+
     def __init__(self, main_window, to_edit: ScheduleEvent = None, when = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -669,7 +810,7 @@ class TaskForm(QFrame):
         self.now = when or self.main_window.get_now()
         self.edit_target = None if to_edit is None else to_edit
 
-        set_size_prop(app, self, 0.4, 0.8)
+        set_size_prop(app, self, 0.7, 0.6)
         self.setWindowTitle("Добавление задачи" if to_edit is None else "Редактирование задачи")
         self.setStyleSheet("""
             background-color: #E1E1E1;
@@ -677,8 +818,13 @@ class TaskForm(QFrame):
         """)
         self.clicks = 0
 
-        self.main_layout = QVBoxLayout()
-        for widget in framed_ui(self, {
+        self.main_layout = QHBoxLayout()
+        self.side_layout, self.view_layout = sidebars_layout(self.main_layout, title="Настройки")
+
+        self.tabs = {}
+        self.side_buttons = []
+
+        for category_name, widget in sidebars_ui(self.side_buttons, self.open_tab, {
             'Имя и описание': [
                 [QVBoxLayout, self.create_ui_task_name],
                 [QVBoxLayout, self.create_ui_task_desc]
@@ -702,9 +848,13 @@ class TaskForm(QFrame):
                 [QVBoxLayout, self.create_ui_finish_buttons]
             ]
         }):
-            self.main_layout.addWidget(widget)
+            # self.main_layout.addWidget(widget)
+            self.tabs.setdefault(category_name, [])
+            self.tabs[category_name].append(widget)
+            self.view_layout.addWidget(widget)
 
-        self.main_layout.addStretch(0)
+        for button in self.side_buttons:
+            self.side_layout.addWidget(button)
 
         if to_edit: self.load_task(to_edit)
 
@@ -1198,6 +1348,8 @@ class MainWindow(QMainWindow):
         self.loaded = False
         self.cfg = Config.load()
 
+        threading.Thread(target=app_killer_thread, args=(self, self.cfg,)).start()
+
         self.display_mode = self.cfg.disp_mode
         self.list_mode_match = {}
 
@@ -1211,7 +1363,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icons/app.svg"))
 
         self.font_skolar = load_font("Skolar PE Variable Regular.ttf")
-        self.day_offset = 0
+        self.day_offset = -self.get_now().weekday()
 
         self.views_height = self.cfg.view_scale
 
@@ -1229,6 +1381,7 @@ class MainWindow(QMainWindow):
         self.create_ui_settings()
 
         self.task_form = None
+        self.settings_form = None
 
         central_widget = QWidget()
         central_widget.setLayout(self.main_layout)
@@ -1289,7 +1442,7 @@ class MainWindow(QMainWindow):
 
         tray_menu.addAction(simple_tray_action(self, "Открыть", callback=self.show))
         tray_menu.addSeparator()
-        tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit))
+        tray_menu.addAction(simple_tray_action(self, "Закрыть", callback=app.quit, enabled=True))
 
         self.tray_icon.setContextMenu(tray_menu)
 
@@ -1409,8 +1562,9 @@ class MainWindow(QMainWindow):
         return button
 
     def show_settings_menu(self):
-        self.settings = SettingsForm(self)
-        self.settings.show()
+        if self.settings_form: self.settings_form.close()
+        self.settings_form = SettingsForm(self)
+        self.settings_form.show()
 
     def show_events_list(self):
         if self.events_list.isVisible():
@@ -1424,8 +1578,7 @@ class MainWindow(QMainWindow):
             w = self.calendar_days_layout.itemAt(i)
             w.widget().deleteLater()
 
-        now = self.get_now() + timedelta(self.day_offset)
-        counter = now - timedelta(days=3)
+        counter = self.get_now() + timedelta(self.day_offset)
         self.calendar_labels: list[list[QFrame | QLabel | QLabel]] = []
 
         for i in range(7):

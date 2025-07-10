@@ -72,28 +72,6 @@
             "color": "65138E"
         },
         {
-            "name": "Диско тест",
-            "date": {
-                "dayM": 26,
-                "mon": 11,
-                "time": [
-                    1120,
-                    1210
-                ],
-                "periods": []
-            },
-            "anchor": "2024.11.19",
-            "desc": "Тест по представлению чисел\nДЗ #1",
-            "times": 1,
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON",
-                "IMPORTANT": "YES",
-                "REPLACER": "YES"
-            },
-            "color": "E5AC00"
-        },
-        {
             "name": "Я дома",
             "date": [
                 {
@@ -400,71 +378,6 @@
             ]
         },
         {
-            "name": "История",
-            "date": [
-                {
-                    "parity": 0,
-                    "dayW": 4,
-                    "time": [
-                        700,
-                        790
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "parity": 0,
-                    "dayW": 4,
-                    "time": [
-                        810,
-                        900
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON"
-            },
-            "color": "CD6A00"
-        },
-        {
-            "name": "Линал",
-            "date": [
-                {
-                    "dayW": 2,
-                    "time": [
-                        700,
-                        790
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "dayW": 2,
-                    "time": [
-                        810,
-                        900
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "desc": "Группа 9.4",
-            "tags": {
-                "WHERE": "LOMO",
-                "LABOR": "LESSON"
-            },
-            "color": "0E94C9"
-        },
-        {
             "name": "Инфа",
             "date": [
                 {
@@ -499,199 +412,6 @@
             "color": "9A2DE7"
         },
         {
-            "name": "МатАн",
-            "date": [
-                {
-                    "dayW": 5,
-                    "time": [
-                        700,
-                        790
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "dayW": 5,
-                    "time": [
-                        810,
-                        900
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "desc": "Поток 7.2",
-            "tags": {
-                "WHERE": "LOMO",
-                "LABOR": "LESSON"
-            },
-            "color": "D22828",
-            "canceled": "2024-11-22"
-        },
-        {
-            "name": "ОПД сдавайся",
-            "date": [
-                {
-                    "parity": 0,
-                    "dayW": 3,
-                    "time": [
-                        810,
-                        900
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "parity": 0,
-                    "dayW": 3,
-                    "time": [
-                        920,
-                        1010
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON"
-            },
-            "color": "4F3B76",
-            "canceled": "2024-12-25"
-        },
-        {
-            "name": "Диско дед",
-            "date": [
-                {
-                    "dayW": 2,
-                    "time": [
-                        1020,
-                        1110
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "dayW": 2,
-                    "time": [
-                        1120,
-                        1210
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON"
-            },
-            "color": "FFBB00",
-            "tasks": [
-                {
-                    "file": "reminder.json",
-                    "params": {
-                        "title": "УРА ОНО КОНЧИЛОСЬ",
-                        "message": null
-                    },
-                    "delay": 60
-                },
-                {
-                    "file": "reminder.json",
-                    "params": {
-                        "title": "Пора к диско деду",
-                        "message": "деду в стиле диско"
-                    },
-                    "delay": 15
-                }
-            ]
-        },
-        {
-            "name": "English",
-            "date": [
-                {
-                    "dayW": 5,
-                    "time": [
-                        920,
-                        1010
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "dayW": 5,
-                    "time": [
-                        1020,
-                        1110
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "LOMO",
-                "LABOR": "LESSON"
-            },
-            "color": "6E0D2D",
-            "canceled": "2024-11-22"
-        },
-        {
-            "name": "Прога",
-            "date": [
-                {
-                    "parity": 0,
-                    "dayW": 6,
-                    "time": [
-                        810,
-                        900
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                },
-                {
-                    "parity": 0,
-                    "dayW": 6,
-                    "time": [
-                        920,
-                        1010
-                    ],
-                    "periods": [
-                        "Семестр 1"
-                    ]
-                }
-            ],
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON",
-                "TRACKING": "YES"
-            },
-            "color": "02BBB2",
-            "tasks": [
-                {
-                    "file": "reminder.json",
-                    "params": {
-                        "title": "УЖЕ",
-                        "message": "ААААААААААААААААА"
-                    },
-                    "delay": 0
-                }
-            ],
-            "canceled": "2024-12-28"
-        },
-        {
             "name": "☠️☠️☠️",
             "date": {
                 "dayW": 3,
@@ -711,46 +431,6 @@
                 "IMPORTANT": "NO"
             },
             "color": "4C0000"
-        },
-        {
-            "name": "ОПД",
-            "date": {
-                "parity": 1,
-                "dayW": 3,
-                "time": [
-                    600,
-                    690
-                ],
-                "periods": [
-                    "Семестр 1"
-                ]
-            },
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "LOMO",
-                "LABOR": "LESSON"
-            },
-            "color": "273E4C"
-        },
-        {
-            "name": "Физра",
-            "date": {
-                "dayW": 7,
-                "time": [
-                    540,
-                    720
-                ],
-                "periods": [
-                    "Семестр 1"
-                ]
-            },
-            "anchor": "2025.11.11",
-            "tags": {
-                "WHERE": "SPORT",
-                "LABOR": "LESSON",
-                "TRACKING": "YES"
-            },
-            "color": "05A100"
         },
         {
             "name": "Доп физры",
@@ -782,27 +462,6 @@
                     "delay": 60
                 }
             ]
-        },
-        {
-            "name": "Зачёт ОПД",
-            "date": {
-                "dayM": 18,
-                "mon": 1,
-                "year": 2025,
-                "time": [
-                    1020,
-                    1140
-                ],
-                "periods": []
-            },
-            "anchor": "2025.1.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON",
-                "IMPORTANT": "YES",
-                "TRACKING": "YES"
-            },
-            "color": "DF0D0D"
         },
         {
             "name": "НОВЫЙ ГОД",
@@ -865,27 +524,6 @@
             "color": "02BBB2"
         },
         {
-            "name": "Зачёт диско",
-            "date": {
-                "dayM": 14,
-                "mon": 1,
-                "year": 2025,
-                "time": [
-                    600,
-                    1010
-                ],
-                "periods": []
-            },
-            "anchor": "2025.1.11",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON",
-                "IMPORTANT": "YES",
-                "TRACKING": "YES"
-            },
-            "color": "FFBB00"
-        },
-        {
             "name": "Рубежка ОПД",
             "date": {
                 "dayM": 11,
@@ -924,48 +562,6 @@
             ]
         },
         {
-            "name": "День рождения приложухи!",
-            "date": {
-                "dayM": 6,
-                "mon": 11,
-                "year": 2024,
-                "time": [
-                    700,
-                    880
-                ],
-                "periods": []
-            },
-            "anchor": "2025.11.6",
-            "desc": "Как давно это было, круто если ты им пользуешся спустя ГОД!!!\n\nОписание от чатГПТ:\nСегодня наша программа празднует свой первый День Рождения! Спасибо за то, что пользуетесь ей спустя год! Надеемся, она продолжает упрощать вашу жизнь!\"\nЕсли у вас есть какие-то особые аспекты, которые вы хотите подчеркнуть, дайте знать, и я могу скорректировать текст.",
-            "times": 99,
-            "tags": {
-                "LABOR": "REST",
-                "HIDDEN": "YES"
-            },
-            "color": "000000",
-            "canceled": "2024-11-06"
-        },
-        {
-            "name": "Инфа ЭКЗ",
-            "date": {
-                "dayM": 18,
-                "mon": 1,
-                "year": 2025,
-                "time": [
-                    600,
-                    780
-                ],
-                "periods": []
-            },
-            "anchor": "2025.1.15",
-            "tags": {
-                "WHERE": "CRON",
-                "LABOR": "LESSON",
-                "IMPORTANT": "YES"
-            },
-            "color": "BD006B"
-        },
-        {
             "name": "Консул инфа",
             "date": {
                 "dayM": 17,
@@ -985,10 +581,1133 @@
                 "TRACKING": "YES"
             },
             "color": "4285E8"
+        },
+        {
+            "name": "Зачёт диско",
+            "date": {
+                "dayM": 14,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    600,
+                    1010
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.11",
+            "times": 1,
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "FFBB00"
+        },
+        {
+            "name": "Зачёт ОПД",
+            "date": {
+                "dayM": 18,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    1020,
+                    1140
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.11",
+            "times": 1,
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "DF0D0D"
+        },
+        {
+            "name": "Инфа ЭКЗ",
+            "date": {
+                "dayM": 18,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    660,
+                    840
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.15",
+            "times": 1,
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES"
+            },
+            "color": "BD006B"
+        },
+        {
+            "name": "Консультация линал",
+            "date": {
+                "dayM": 25,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    1020,
+                    1210
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "TRACKING": "YES"
+            },
+            "color": "05CFCF"
+        },
+        {
+            "name": "КР3 линал",
+            "date": {
+                "dayM": 21,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    1080,
+                    1320
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "IMPORTANT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "B0B8D9",
+            "tasks": [
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "ЪУЪ",
+                        "message": null
+                    },
+                    "delay": 0
+                }
+            ]
+        },
+        {
+            "name": "Линал ЭКЗ",
+            "date": {
+                "dayM": 27,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    705,
+                    1010
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "E1180D"
+        },
+        {
+            "name": "МатАН консул",
+            "date": {
+                "dayM": 29,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    1020,
+                    1210
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "LABOR": "LESSON",
+                "TRANSPARENT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "A960F6"
+        },
+        {
+            "name": "МатАН ЭКЗ",
+            "date": {
+                "dayM": 30,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    600,
+                    1010
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "TRANSPARENT": "YES"
+            },
+            "color": "D35617"
+        },
+        {
+            "name": "История ЭКЗ",
+            "date": {
+                "dayM": 28,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    780,
+                    960
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.23",
+            "desc": "1514 каб",
+            "times": 1,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES"
+            },
+            "color": "E38D50"
+        },
+        {
+            "name": "ДЕД лайн диско",
+            "date": {
+                "dayM": 29,
+                "mon": 1,
+                "year": 2025,
+                "time": [
+                    480,
+                    1440
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.21",
+            "times": 1,
+            "tags": {
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "E9E099"
+        },
+        {
+            "name": "Допса",
+            "date": {
+                "dayM": 1,
+                "mon": 2,
+                "year": 2025,
+                "time": [
+                    480,
+                    1440
+                ],
+                "periods": []
+            },
+            "anchor": "2025.1.22",
+            "times": 1,
+            "tags": {
+                "TRANSPARENT": "YES"
+            },
+            "color": "A5AB9C"
+        },
+        {
+            "name": "Диско дед",
+            "date": [
+                {
+                    "dayW": 1,
+                    "time": [
+                        930,
+                        1020
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 1,
+                    "time": [
+                        1030,
+                        1120
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 2,
+                    "time": [
+                        1020,
+                        1110
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "dayW": 2,
+                    "time": [
+                        1120,
+                        1210
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON"
+            },
+            "color": "FFBB00",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "УРА ОНО КОНЧИЛОСЬ",
+                        "message": null
+                    },
+                    "delay": 60
+                },
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "Пора к диско деду",
+                        "message": "деду в стиле диско"
+                    },
+                    "delay": 15
+                }
+            ]
+        },
+        {
+            "name": "БЖД",
+            "date": {
+                "dayM": 10,
+                "mon": 2,
+                "year": 2025,
+                "time": [
+                    1230,
+                    1320
+                ],
+                "periods": [
+                    "Семестр 2"
+                ]
+            },
+            "anchor": "2025.2.10",
+            "times": 1,
+            "tags": {
+                "WHERE": "ONLINE",
+                "LABOR": "LESSON"
+            },
+            "color": "EBBC56",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "ОБЖ через",
+                        "message": "2 секунды"
+                    },
+                    "delay": 2
+                }
+            ]
+        },
+        {
+            "name": "История пересдача",
+            "date": {
+                "dayW": 4,
+                "mon": 2,
+                "year": 2025,
+                "time": [
+                    780,
+                    870
+                ],
+                "periods": [
+                    "Семестр 2"
+                ]
+            },
+            "anchor": "2025.2.10",
+            "desc": "Ауд. 1226",
+            "times": 1,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES"
+            },
+            "color": "E69E21",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "На историю го",
+                        "message": "а"
+                    },
+                    "delay": 60
+                }
+            ]
+        },
+        {
+            "name": "Пересдача ИТ",
+            "date": {
+                "dayW": [
+                    3,
+                    4
+                ],
+                "time": [
+                    1030,
+                    1120
+                ],
+                "periods": []
+            },
+            "anchor": "2025.2.10",
+            "desc": "Ауд. 1512",
+            "times": 2,
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES"
+            },
+            "color": "096E82",
+            "tasks": [
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "ИТ",
+                        "message": "1 час"
+                    },
+                    "delay": 60
+                },
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "ИТ",
+                        "message": "1 час"
+                    },
+                    "delay": 60
+                }
+            ]
+        },
+        {
+            "name": "Линал",
+            "date": [
+                {
+                    "dayW": 2,
+                    "time": [
+                        690,
+                        780
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 2,
+                    "time": [
+                        700,
+                        790
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "dayW": 2,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "desc": "Сем 1: Группа 9.4",
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON"
+            },
+            "color": "0E94C9"
+        },
+        {
+            "name": "Линал Лекция",
+            "date": {
+                "dayW": 6,
+                "time": [
+                    490,
+                    580
+                ],
+                "periods": [
+                    "Семестр 2"
+                ]
+            },
+            "anchor": "2025.2.14",
+            "tags": {
+                "WHERE": "ONLINE"
+            },
+            "color": "16C8DC"
+        },
+        {
+            "name": "Диско тест схемы",
+            "date": {
+                "dayM": 17,
+                "mon": 2,
+                "year": 2025,
+                "time": [
+                    1030,
+                    1120
+                ],
+                "periods": []
+            },
+            "anchor": "2025.2.14",
+            "times": 1,
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "REPLACER": "YES"
+            },
+            "color": "DE812F"
+        },
+        {
+            "name": "ОПД сдавайся",
+            "date": [
+                {
+                    "parity": 0,
+                    "dayW": 2,
+                    "time": [
+                        1030,
+                        1120
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 2,
+                    "time": [
+                        1130,
+                        1220
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 3,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 3,
+                    "time": [
+                        920,
+                        1010
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "TRACKING": "YES"
+            },
+            "color": "4F3B76",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "Lesss go",
+                        "message": null
+                    },
+                    "delay": 70
+                }
+            ],
+            "canceled": "2024-12-25"
+        },
+        {
+            "name": "Физра",
+            "date": {
+                "dayW": 7,
+                "time": [
+                    600,
+                    780
+                ],
+                "periods": [
+                    "Семестр 1",
+                    "Семестр 2"
+                ]
+            },
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "SPORT",
+                "LABOR": "LESSON"
+            },
+            "color": "05A100"
+        },
+        {
+            "name": "История",
+            "date": [
+                {
+                    "parity": 0,
+                    "dayW": 4,
+                    "time": [
+                        690,
+                        780
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 4,
+                    "time": [
+                        700,
+                        790
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 4,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 4,
+                    "time": [
+                        930,
+                        1020
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON"
+            },
+            "color": "CD6A00"
+        },
+        {
+            "name": "Базы Данных",
+            "date": [
+                {
+                    "parity": 1,
+                    "dayW": 2,
+                    "time": [
+                        1030,
+                        1120
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 1,
+                    "dayW": 2,
+                    "time": [
+                        1130,
+                        1220
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                }
+            ],
+            "anchor": "2025.2.10",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "TRACKING": "YES"
+            },
+            "color": "A74285"
+        },
+        {
+            "name": "Диско тест",
+            "date": {
+                "dayM": 26,
+                "mon": 11,
+                "year": 2024,
+                "time": [
+                    1120,
+                    1210
+                ],
+                "periods": []
+            },
+            "anchor": "2025.11.19",
+            "desc": "Тест по представлению чисел\nДЗ #1",
+            "times": 1,
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "REPLACER": "YES"
+            },
+            "color": "E5AC00"
+        },
+        {
+            "name": "День рождения приложухи!",
+            "date": {
+                "dayM": 6,
+                "mon": 11,
+                "time": [
+                    700,
+                    880
+                ],
+                "periods": []
+            },
+            "anchor": "2025.11.6",
+            "desc": "Как давно это было, круто если ты им пользуешся спустя ГОД!!!\n\nОписание от чатГПТ:\nСегодня наша программа празднует свой первый День Рождения! Спасибо за то, что пользуетесь ей спустя год! Надеемся, она продолжает упрощать вашу жизнь!\"\nЕсли у вас есть какие-то особые аспекты, которые вы хотите подчеркнуть, дайте знать, и я могу скорректировать текст.",
+            "times": 99,
+            "tags": {
+                "LABOR": "REST",
+                "HIDDEN": "YES"
+            },
+            "color": "000000",
+            "canceled": "2024-11-06"
+        },
+        {
+            "name": "История досдача",
+            "date": {
+                "dayM": 22,
+                "mon": 2,
+                "year": 2025,
+                "time": [
+                    1230,
+                    1320
+                ],
+                "periods": []
+            },
+            "anchor": "2025.2.14",
+            "desc": "25+ и 36 вопросы",
+            "times": 1,
+            "tags": {
+                "WHERE": "ONLINE",
+                "LABOR": "LESSON",
+                "IMPORTANT": "YES",
+                "REPLACER": "YES"
+            },
+            "color": "CC862A",
+            "tasks": [
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "121313",
+                        "message": null
+                    },
+                    "delay": 60
+                }
+            ]
+        },
+        {
+            "name": "Скорый конец обработки",
+            "date": {
+                "dayM": 18,
+                "mon": 3,
+                "year": 2025,
+                "time": [
+                    900,
+                    960
+                ],
+                "periods": []
+            },
+            "anchor": "2025.3.18",
+            "tags": {
+                "TRANSPARENT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "D42F8A",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "Обработка кончилась!",
+                        "message": "Или скоро кончится..."
+                    },
+                    "delay": 0
+                }
+            ]
+        },
+        {
+            "name": "Обработка 🤢🤢🤢",
+            "date": {
+                "dayM": 11,
+                "mon": 4,
+                "year": 2025,
+                "time": [
+                    660,
+                    1020
+                ],
+                "periods": []
+            },
+            "anchor": "2025.4.7",
+            "desc": "Блеат",
+            "tags": {
+                "LABOR": "REST",
+                "TRANSPARENT": "YES",
+                "TRACKING": "YES"
+            },
+            "color": "3F0F00",
+            "tasks": [
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "ОБРАБОТКА СЕГОДНЯ",
+                        "message": "ААААААААА"
+                    },
+                    "delay": 180
+                },
+                {
+                    "file": "alarm.json",
+                    "params": {
+                        "title": "ОБРАБОТКА СЕГОДНЯ",
+                        "message": "ААААААААА"
+                    },
+                    "delay": 180
+                }
+            ]
+        },
+        {
+            "name": "КиК",
+            "date": [
+                {
+                    "dayW": 1,
+                    "time": [
+                        690,
+                        780
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 1,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                }
+            ],
+            "anchor": "2025.2.10",
+            "desc": "Перевод в КиК 1.7 - каб 2201\n\nВыбирай итмо и не выбирай вообще 💀🤣",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON"
+            },
+            "color": "35C809",
+            "canceled": "2025-04-21"
+        },
+        {
+            "name": "МатАн",
+            "date": [
+                {
+                    "dayW": 5,
+                    "time": [
+                        590,
+                        680
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        690,
+                        780
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        700,
+                        790
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "desc": "Сем 2: Поток 1.4\nСем 1: Поток 7.2",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON"
+            },
+            "color": "D22828",
+            "canceled": "2024-11-22,2025-05-09"
+        },
+        {
+            "name": "English",
+            "date": [
+                {
+                    "dayW": 5,
+                    "time": [
+                        920,
+                        1010
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        930,
+                        1020
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        1020,
+                        1110
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "dayW": 5,
+                    "time": [
+                        1030,
+                        1120
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "desc": "Sem 2: Thread 46\nSem 1: Thread 49",
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON"
+            },
+            "color": "6E0D2D",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "les'go",
+                        "message": "to eng"
+                    },
+                    "delay": 5
+                }
+            ],
+            "canceled": "2024-11-22,2025-05-09"
+        },
+        {
+            "name": "БД",
+            "date": {
+                "dayW": 3,
+                "year": 2025,
+                "time": [
+                    690,
+                    780
+                ],
+                "periods": [
+                    "Семестр 2"
+                ]
+            },
+            "anchor": "2025.2.2",
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON"
+            },
+            "color": "1919D3",
+            "canceled": "2025-02-19,2025-05-28"
+        },
+        {
+            "name": "Прога",
+            "date": [
+                {
+                    "parity": 0,
+                    "dayW": 3,
+                    "time": [
+                        930,
+                        1020
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 3,
+                    "time": [
+                        1030,
+                        1120
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 6,
+                    "time": [
+                        810,
+                        900
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                },
+                {
+                    "parity": 0,
+                    "dayW": 6,
+                    "time": [
+                        920,
+                        1010
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "CRON",
+                "LABOR": "LESSON",
+                "TRACKING": "YES"
+            },
+            "color": "02BBB2",
+            "tasks": [
+                {
+                    "file": "reminder.json",
+                    "params": {
+                        "title": "УЖЕ",
+                        "message": "ААААААААААААААААА"
+                    },
+                    "delay": 0
+                }
+            ],
+            "canceled": "2024-12-28,2025-05-28"
+        },
+        {
+            "name": "ОПД лекция",
+            "date": [
+                {
+                    "parity": 1,
+                    "dayW": 3,
+                    "time": [
+                        590,
+                        680
+                    ],
+                    "periods": [
+                        "Семестр 2"
+                    ]
+                },
+                {
+                    "parity": 1,
+                    "dayW": 3,
+                    "time": [
+                        600,
+                        690
+                    ],
+                    "periods": [
+                        "Семестр 1"
+                    ]
+                }
+            ],
+            "anchor": "2025.11.11",
+            "tags": {
+                "WHERE": "LOMO",
+                "LABOR": "LESSON"
+            },
+            "color": "273E4C",
+            "canceled": "2025-05-21"
+        },
+        {
+            "name": "ТЕСТ",
+            "date": {
+                "dayW": [
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7
+                ],
+                "mon": 7,
+                "year": [
+                    2025,
+                    2029
+                ],
+                "time": [
+                    480,
+                    1440
+                ],
+                "periods": []
+            },
+            "anchor": "2025.7.10",
+            "times": 1,
+            "tags": {
+                "TRANSPARENT": "YES"
+            },
+            "color": "61DA29"
         }
     ],
     "y_view": 0,
-    "view_scale": 2400,
+    "view_scale": 2200,
     "asleeps": {
         "2024-11-25": 180,
         "2024-11-26": 162,
@@ -1041,8 +1760,171 @@
         "2025-01-13": 76,
         "2025-01-14": 741,
         "2025-01-15": 94,
-        "2025-01-16": 859
+        "2025-01-16": 868,
+        "2025-01-17": 7,
+        "2025-01-18": 1307,
+        "2025-01-19": 1336,
+        "2025-01-21": 69,
+        "2025-01-22": 1367,
+        "2025-01-23": 69,
+        "2025-01-24": 174,
+        "2025-01-25": 104,
+        "2025-01-26": 117,
+        "2025-01-27": 1401,
+        "2025-01-28": 1028,
+        "2025-01-29": 1151,
+        "2025-01-30": 1111,
+        "2025-01-31": 950,
+        "2025-02-01": 889,
+        "2025-02-02": 26,
+        "2025-02-03": 964,
+        "2025-02-04": 1347,
+        "2025-02-05": 1118,
+        "2025-02-06": 1108,
+        "2025-02-07": 1240,
+        "2025-02-08": 138,
+        "2025-02-09": 871,
+        "2025-02-10": 1254,
+        "2025-02-11": 1173,
+        "2025-02-12": 49,
+        "2025-02-13": 716,
+        "2025-02-14": 878,
+        "2025-02-15": 1287,
+        "2025-02-16": 64,
+        "2025-02-17": 792,
+        "2025-02-18": 1219,
+        "2025-02-19": 1312,
+        "2025-02-20": 70,
+        "2025-02-21": 1355,
+        "2025-02-22": 1265,
+        "2025-02-24": 1341,
+        "2025-02-25": 82,
+        "2025-02-26": 1119,
+        "2025-02-27": 748,
+        "2025-02-28": 934,
+        "2025-03-01": 592,
+        "2025-03-03": 676,
+        "2025-03-04": 99,
+        "2025-03-05": 1413,
+        "2025-03-06": 107,
+        "2025-03-07": 77,
+        "2025-03-08": 224,
+        "2025-03-09": 75,
+        "2025-03-10": 100,
+        "2025-03-11": 1334,
+        "2025-03-12": 144,
+        "2025-03-13": 1025,
+        "2025-03-14": 234,
+        "2025-03-15": 30,
+        "2025-03-16": 939,
+        "2025-03-18": 35,
+        "2025-03-19": 22,
+        "2025-03-20": 1229,
+        "2025-03-22": 77,
+        "2025-03-23": 81,
+        "2025-03-24": 62,
+        "2025-03-25": 71,
+        "2025-03-26": 901,
+        "2025-03-27": 129,
+        "2025-03-28": 187,
+        "2025-03-29": 1116,
+        "2025-03-30": 870,
+        "2025-03-31": 984,
+        "2025-04-01": 800,
+        "2025-04-03": 1139,
+        "2025-04-04": 762,
+        "2025-04-05": 852,
+        "2025-04-06": 851,
+        "2025-04-07": 137,
+        "2025-04-08": 1110,
+        "2025-04-09": 946,
+        "2025-04-10": 154,
+        "2025-04-11": 932,
+        "2025-04-12": 344,
+        "2025-04-13": 20,
+        "2025-04-14": 191,
+        "2025-04-15": 1160,
+        "2025-04-16": 1371,
+        "2025-04-17": 1196,
+        "2025-04-18": 1242,
+        "2025-04-19": 807,
+        "2025-04-20": 99,
+        "2025-04-21": 295,
+        "2025-04-22": 136,
+        "2025-04-23": 1436,
+        "2025-04-24": 78,
+        "2025-04-25": 1211,
+        "2025-04-26": 122,
+        "2025-04-27": 203,
+        "2025-04-28": 225,
+        "2025-04-29": 407,
+        "2025-04-30": 269,
+        "2025-05-01": 400,
+        "2025-05-02": 322,
+        "2025-05-03": 330,
+        "2025-05-04": 255,
+        "2025-05-05": 224,
+        "2025-05-06": 153,
+        "2025-05-07": 267,
+        "2025-05-08": 301,
+        "2025-05-09": 283,
+        "2025-05-10": 479,
+        "2025-05-11": 479,
+        "2025-05-12": 479,
+        "2025-05-13": 145,
+        "2025-05-14": 381,
+        "2025-05-15": 77,
+        "2025-05-16": 171,
+        "2025-05-17": 179,
+        "2025-05-18": 145,
+        "2025-05-19": 262,
+        "2025-05-20": 83,
+        "2025-05-21": 109,
+        "2025-05-22": 243,
+        "2025-05-23": 187,
+        "2025-05-24": 266,
+        "2025-05-25": 199,
+        "2025-05-26": 138,
+        "2025-05-27": 53,
+        "2025-05-28": 213,
+        "2025-05-29": 204,
+        "2025-05-30": 246,
+        "2025-05-31": 214,
+        "2025-06-01": 254,
+        "2025-06-02": 969,
+        "2025-06-04": 221,
+        "2025-06-05": 108,
+        "2025-06-06": 798,
+        "2025-06-07": 183,
+        "2025-06-08": 306,
+        "2025-06-09": 936,
+        "2025-06-10": 94,
+        "2025-06-11": 211,
+        "2025-06-12": 173,
+        "2025-06-13": 152,
+        "2025-06-14": 1112,
+        "2025-06-15": 273,
+        "2025-06-16": 71,
+        "2025-06-17": 1195,
+        "2025-06-18": 824,
+        "2025-06-20": 235,
+        "2025-06-21": 210,
+        "2025-06-22": 1028,
+        "2025-06-23": 95,
+        "2025-06-24": 1386,
+        "2025-06-25": 921,
+        "2025-06-26": 216,
+        "2025-06-27": 800,
+        "2025-06-28": 199,
+        "2025-06-30": 1434,
+        "2025-07-01": 956,
+        "2025-07-05": 1084,
+        "2025-07-06": 1423,
+        "2025-07-07": 1327,
+        "2025-07-08": 670,
+        "2025-07-09": 1380,
+        "2025-07-10": 791
     },
-    "upcoming_hidden": true,
-    "disp_mode": "Список"
+    "upcoming_hidden": false,
+    "disp_mode": "Поле"
 }

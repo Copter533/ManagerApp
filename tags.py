@@ -1,8 +1,9 @@
 class Tag:
-    def __init__(self, name, active_scheme='blue'):
+    def __init__(self, name, payload: dict = None, active_scheme='blue'):
         self.active_scheme = active_scheme
         self.name  = name
         self.group = None
+        self.payload = payload or {}
 
     def __eq__(self, other):
         if other is None: return False
@@ -16,41 +17,42 @@ class Tags:
 
     class WHERE:
         name = "Место"
-        NOV   = Tag("Новгород")
-        LOMO  = Tag("Ломоносова")
-        CRON  = Tag("Кронва")
-        SPORT = Tag("Спорт зал")
+        NOV    = Tag("Новгород",   payload={'icon': 'home.svg'})
+        LOMO   = Tag("Ломоносова", payload={'icon': 'lomo.svg'})
+        CRON   = Tag("Кронва",     payload={'icon': 'cron.svg'})
+        ONLINE = Tag("Онлайн",     payload={'icon': 'wifi.svg'})
+        SPORT  = Tag("Спорт зал",  payload={'icon': 'sword.svg'})
 
     class LABOR:
         name = "Деятельность"
         LESSON = Tag("Пара")
         REST   = Tag("Отдых")
-        SPORT  = Tag("Спорт", 'yellow')
+        SPORT  = Tag("Спорт", active_scheme='yellow')
 
     class IMPORTANT:
         name = "Важно"
-        YES = Tag("Да",  'green')
-        NO  = Tag("Нет", 'red')
+        YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
 
     class TRANSPARENT:
         name = "Прозрачное"
-        YES = Tag("Да",  'green')
-        NO  = Tag("Нет", 'red')
+        YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
 
     class REPLACER:
         name = "Заменяющее"
-        YES = Tag("Да",  'green')
-        NO  = Tag("Нет", 'red')
+        YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
 
     class TRACKING:
         name = "Отслеживание"
-        YES = Tag("Да",  'green')
-        NO  = Tag("Нет", 'red')
+        YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
 
     class HIDDEN:
         name = "Скрытое"
-        YES = Tag("Да",  'green')
-        NO  = Tag("Нет", 'red')
+        YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
 
     class _UniversalTag:
         name: str
@@ -87,7 +89,7 @@ class TagList:
         assert isinstance(item, Tag)
         return item in self._container.values()
 
-    def get(self, group):
+    def get(self, group) -> Tag:
         return self._container.get(group.name)
 
     def have_to_go(self):
