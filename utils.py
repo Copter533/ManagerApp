@@ -144,7 +144,7 @@ class MultiDate:
             [1,    7,    'День недели', weekday],
             [1,    31,   'День месяца', monthday],
             [1,    12,   'Месяц',       month],
-            [2024, 2100, 'Год',         year]
+            [2005, 2100, 'Год',         year]
         ]:
             if value is None: continue
             for v in (value,) if isinstance(value, int) else value:
@@ -306,9 +306,9 @@ class MultiDate:
         if dayM and mon:
             res += f'{dayM} {MultiDate.tuple_range_to_str(mon, replacer=lambda x: months[x-1][0])}, ' # 1 апреля
         elif dayM:
-            res += f'{dayM} числа, '                           # 1 число
+            res += f'{dayM} числа, '                                                                  # 1 число
         elif mon:
-            res += f'в {MultiDate.tuple_range_to_str(mon, replacer=lambda x: months[x-1][2])}'        # в апреле
+            res += f'в {MultiDate.tuple_range_to_str(mon, replacer=lambda x: months[x-1][1])} '       # в апреле
 
         if dayW: res += f'{dayW}, '
 
@@ -326,6 +326,42 @@ class MultiDate:
         if len(self._states) == 1:
             return self.str_state(self._states[0])
         return 'Будет:\n'+'\n'.join(map(self.str_state, self._states))
+
+# class MultiDateParity(MultiDate):
+#     def __init__(self, anchors: list[date], on_days=0, off_days, month=None, year=None, time=None, parity=None):
+#         super().__init__(None, None, month, year, time, parity)
+#         self.anchors = anchors
+#
+#         self.on_days  = on_days
+#         self.off_days = off_days
+#
+#     @classmethod
+#     def from_json(cls, obj: dict):
+#         res = cls()
+#         for state in (obj if isinstance(obj, list) else [obj]):
+#             data = state.copy()
+#             res.add_state(
+#                 parity=data.get('parity'),
+#                 weekday=None,
+#                 monthday=None,
+#                 month=data.get('mon'),
+#                 year=data.get('year'),
+#                 time=data.get('time'),
+#                 periods=data.get('periods')
+#             )
+#         res._states.sort(key=cls.get_sort_value_for_state)
+#         return res
+#
+#     def to_json(self):
+#         res = []
+#         for state in self._states:
+#             data = state.copy()
+#             for k in ('dayW', 'dayM', 'mon', 'year'):
+#                 if k not in data: continue
+#                 if len(data[k]) == 1: data[k] = data[k][0]
+#             res.append({k: v for k, v in data.items() if v is not None})
+#         return res if len(res) > 1 else res[0]
+
 
 class ScheduleEvent:
     def __init__(self, name, multi_date: MultiDate, description: str = None,

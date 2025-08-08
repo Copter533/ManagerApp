@@ -369,8 +369,8 @@ class TimeColumnView(QFrame):
                 if stamp1 is None: continue
                 if stamp2 is None: continue
                 if not event1.can_block(event2): continue
-                if not event1.get_timestamps(self.now): continue
-                if not event2.get_timestamps(self.now): continue
+                if not event1.get_all_timestamps(self.now, ): continue
+                if not event2.get_all_timestamps(self.now, ): continue
                 if not (max(stamp1[0], stamp2[0]) <= min(stamp1[1], stamp2[1])): continue
                 events_and_stamps[i][1] = None
 
@@ -825,19 +825,19 @@ class TaskForm(QFrame):
         self.side_buttons = []
 
         for category_name, widget in sidebars_ui(self.side_buttons, self.open_tab, {
-            'Имя и описание': [
+            'Описание': [
                 [QVBoxLayout, self.create_ui_task_name],
                 [QVBoxLayout, self.create_ui_task_desc]
             ],
-            'Настройка времени': [
+            'Расписание': [
                 [QVBoxLayout, self.create_ui_date_selector],
                 [QHBoxLayout, self.create_ui_anchor_date]
             ],
-            'Выполнение и отмена': [
+            'Отмена': [
                 [QHBoxLayout, self.create_ui_complete_count],
                 [QVBoxLayout, self.create_ui_canceled_dates]
             ],
-            'Запланированные задачи': [
+            'Скрипты': [
                 [QVBoxLayout, self.create_ui_announced_tasks]
             ],
             'Прочее': [
@@ -1389,6 +1389,7 @@ class MainWindow(QMainWindow):
 
         self.upcoming_events = UpcomingEvents(self, is_hidden=self.cfg.upcoming_hidden)
 
+        # Плавающие кнопки нужно инициализировать (ставить родителя) после установки виджета окну!!!
         self.hide_btn = self.create_button("hide.svg", icon_size=100, callback=self.toggle_toolbar)
         self.hide_btn.setParent(self)
 

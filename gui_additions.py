@@ -540,17 +540,24 @@ class SingleInstanceApplication(QApplication):
     def __init__(self, *args, unique_key):
         super().__init__(*args)
         self.shared_memory = QSharedMemory(unique_key)
+
+        # Проверка на существующий экземпляр
+        if 'debug' in sys.argv[1:]: return
+
         if self.shared_memory.attach():
             self.alert_other_instance()
-            if not 'debug' in sys.argv[1:]:
-                sys.exit(0)
+            sys.exit(0)  # Немедленный выход при дубликате
         else:
+            # Создаем новую shared memory
             if not self.shared_memory.create(1):
-                QMessageBox.critical(None, "Ошибка", "Не удалось создать уникальный маркер для приложения")
+                QMessageBox.critical(None, "Ошибка",
+                                     "Не удалось создать уникальный маркер для приложения")
                 sys.exit(1)
 
     def alert_other_instance(self):
-        print("Multiple runs")
+        """Оповещение о существующем экземпляре"""
+        QMessageBox.information(None, "Приложение уже запущено",
+                                "Программа уже работает в другом окне.")
 
 
 class SpoilerOptions(QPushButton):
