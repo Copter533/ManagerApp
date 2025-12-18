@@ -14,6 +14,8 @@ class Tag:
 
 class Tags:
     name: str = None
+    # TODO: не реализовано
+    hint: str = None
 
     class WHERE:
         name = "Место"
@@ -52,6 +54,13 @@ class Tags:
     class HIDDEN:
         name = "Скрытое"
         YES = Tag("Да",  active_scheme='green')
+        NO  = Tag("Нет", active_scheme='red')
+
+    # TODO: не реализовано
+    class BACKGROUND:
+        name = "Задний план"
+        hint = "Само событие станет невидимым на графике, но оно поменяет задний фон самой колонки"
+        YES = Tag("Да",  active_scheme='red')
         NO  = Tag("Нет", active_scheme='red')
 
     class _UniversalTag:

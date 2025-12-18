@@ -122,7 +122,7 @@ class TimePeriod:
             if not period.match(check): return False
         return True
 
-class MultiDate:
+class MultiDate: #OLD
     def __init__(self, weekday=None, monthday=None, month=None, year=None, time=None, parity=None):
         self._states = []
 
@@ -439,6 +439,10 @@ class ScheduleEvent:
         return False
 
     def can_block(self, other):
+        """
+            Проверяет теги двух событий, и определяет достаточно ли приоритета, чтобы
+            заблокировать другое событие (оно не произойдёт, вызывать в случае наложении времени)
+        """
         if other.tags.have(Tags.IMPORTANT.YES): return False
         if not self.tags.have(Tags.REPLACER.YES): return False
 

@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from announced_task import AnnouncedTask
-from tags import Tags, Tag
+from tags import Tags, Tag, TagList
 from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time, all_periods, \
     MultiDate, beauty_date, TimePeriod, is_main_window
 
@@ -1244,9 +1244,9 @@ class DateSelector(QFrame):
 
     def create_ui_monthday_select(self):
         self.monthday_select_container = QWidget()
-        self.monthday_select_container.setFixedHeight(150)
-        # self.needed_height += 150
+        self.monthday_select_container.setFixedHeight(250)
         layout = QGridLayout()
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         for i in range(0, 31):
             btn = SlideButton(self, self.monthday_select_container, i+1, i+1, "calibri", 15, 40)
@@ -1262,7 +1262,8 @@ class DateSelector(QFrame):
 
             btn.setOnClick(on_click)
             btn.setStyleSheet(self.off_style)
-            layout.addWidget(btn, i // 11, i % 11)
+            width = 7
+            layout.addWidget(btn, i // width, i % width)
 
         self.monthday_select_container.setLayout(layout)
         self.layout.addWidget(self.monthday_select_container)
@@ -1617,6 +1618,7 @@ class CalendarPopup(QFrame):
 
         from_day = self.pick_date - timedelta(days=self.pick_date.weekday())
 
+        events: list[ScheduleEvent] = [e for e in self.main_window.scheduled_events if not e.tags.have(Tags.HIDDEN.YES)]
         for index in range(6*7):
             day = from_day + timedelta(days=index)
             is_current_month = day.month == self.pick_date.month
@@ -1625,8 +1627,7 @@ class CalendarPopup(QFrame):
 
             tooltips = []
             colors = []
-            for event in self.main_window.scheduled_events:
-                event: ScheduleEvent
+            for event in events:
                 if not event.can_happen(day): continue
                 colors.append(QColor(*event.color))
                 tooltips.append(event.name)

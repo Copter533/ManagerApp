@@ -1340,7 +1340,6 @@ class TaskForm(QFrame):
         if k == 13:  # ENTER
             self.finish()
 
-
 class MainWindow(QMainWindow):
     def __init__(self, debug=False, mock_time=False):
         super().__init__()
