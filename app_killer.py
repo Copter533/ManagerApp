@@ -2,7 +2,7 @@ import win32con
 import win32gui
 from time import sleep
 
-from utils import Config
+from date_utils import Config
 
 
 class TargetedWindow:

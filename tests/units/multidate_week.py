@@ -39,7 +39,7 @@ class TestMultiDateWeekday(unittest.TestCase):
             date(2023, 10, 4),  # Ср
             date(2023, 10, 9)   # Пн
         ]
-        result = list(holder.get_all_timestamps(start, end))
+        result = list(holder._impl_get_all_timestamps(start, end))
         self.assertEqual(result, expected)
         self.assertEqual(result, sorted(result))  # Проверка сортировки
 
@@ -53,7 +53,7 @@ class TestMultiDateWeekday(unittest.TestCase):
             date(2023, 10, 4),  # Ср
             date(2023, 10, 9)   # Пн
         ]
-        self.assertEqual(list(holder.get_all_timestamps(start, end)), expected)
+        self.assertEqual(list(holder._impl_get_all_timestamps(start, end)), expected)
 
     def test_get_all_timestamps_edge_week(self):
         """Проверка на границе недели"""
@@ -61,7 +61,7 @@ class TestMultiDateWeekday(unittest.TestCase):
         start = date(2023, 10, 7)  # Суббота
         end = date(2023, 10, 8)    # Воскресенье
         expected = [date(2023, 10, 8)]
-        self.assertEqual(list(holder.get_all_timestamps(start, end)), expected)
+        self.assertEqual(list(holder._impl_get_all_timestamps(start, end)), expected)
 
     def test_count_timestamps_single_day(self):
         """Проверка count_timestamps для одного дня"""
@@ -112,7 +112,7 @@ class TestMultiDateWeekday(unittest.TestCase):
         holder = MultiDateWeekday([1], [10])
         start = date(2023, 10, 3)
         end = date(2023, 10, 4)
-        self.assertEqual(list(holder.get_all_timestamps(start, end)), [])
+        self.assertEqual(list(holder._impl_get_all_timestamps(start, end)), [])
         self.assertEqual(holder.count_timestamps(start, end), 0)
 
     def test_week_boundary(self):
@@ -124,7 +124,7 @@ class TestMultiDateWeekday(unittest.TestCase):
             date(2023, 10, 2),  # Пн
             date(2023, 10, 6)   # Пт
         ]
-        self.assertEqual(list(holder.get_all_timestamps(start, end)), expected)
+        self.assertEqual(list(holder._impl_get_all_timestamps(start, end)), expected)
 
     def test_multiple_weeks_edge(self):
         """Проверка события в последний день диапазона"""
@@ -133,7 +133,7 @@ class TestMultiDateWeekday(unittest.TestCase):
         end = date(2023, 10, 8)  # Воскресенье
         self.assertEqual(holder.count_timestamps(start, end), 2)
         self.assertEqual(
-            list(holder.get_all_timestamps(start, end)),
+            list(holder._impl_get_all_timestamps(start, end)),
             [date(2023, 10, 1), date(2023, 10, 8)]
         )
 
@@ -146,7 +146,7 @@ class TestMultiDateWeekday(unittest.TestCase):
             date(2023, 10, 3),  # Вт
             date(2023, 10, 6)   # Пт
         ]
-        self.assertEqual(list(holder.get_all_timestamps(start, end)), expected)
+        self.assertEqual(list(holder._impl_get_all_timestamps(start, end)), expected)
 
     def test_year_boundary(self):
         """Проверка перехода через новогодние каникулы"""
@@ -157,7 +157,7 @@ class TestMultiDateWeekday(unittest.TestCase):
             date(2023, 12, 31),  # Воскресенье 2023
             date(2024, 1, 7)     # Но это уже после end_date
         ]
-        result = list(holder.get_all_timestamps(start, end))
+        result = list(holder._impl_get_all_timestamps(start, end))
         self.assertEqual(result, [date(2023, 12, 31)])
         self.assertEqual(holder.count_timestamps(start, end), 1)
 

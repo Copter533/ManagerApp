@@ -12,7 +12,7 @@ class TestMultiDateMonthdayVulnerabilities(unittest.TestCase):
         end_date = date(2023, 4, 1)
 
         # Не должно вызывать бесконечный цикл
-        results = list(multidate.get_all_timestamps(start_date, end_date))
+        results = list(multidate._impl_get_all_timestamps(start_date, end_date))
         expected = [date(2023, 1, 31), date(2023, 3, 31)]
         self.assertEqual(results, expected)
 
@@ -22,7 +22,7 @@ class TestMultiDateMonthdayVulnerabilities(unittest.TestCase):
         start_date = date(2023, 1, 1)
         end_date = date(2023, 1, 31)
 
-        results = list(multidate.get_all_timestamps(start_date, end_date))
+        results = list(multidate._impl_get_all_timestamps(start_date, end_date))
         self.assertEqual(results, [])
 
     def test_get_all_timestamps_single_day_corner_cases(self):
@@ -32,7 +32,7 @@ class TestMultiDateMonthdayVulnerabilities(unittest.TestCase):
         # Начальная дата - последний день месяца
         start_date = date(2023, 1, 31)
         end_date = date(2023, 3, 1)
-        results = list(multidate.get_all_timestamps(start_date, end_date))
+        results = list(multidate._impl_get_all_timestamps(start_date, end_date))
         expected = [date(2023, 2, 1), date(2023, 3, 1)]
         self.assertEqual(results, expected)
 
@@ -85,7 +85,7 @@ class TestMultiDateMonthdayVulnerabilities(unittest.TestCase):
         end_date = date(2023, 12, 31)
 
         count_result = multidate.count_timestamps(start_date, end_date)
-        all_results = list(multidate.get_all_timestamps(start_date, end_date))
+        all_results = list(multidate._impl_get_all_timestamps(start_date, end_date))
 
         self.assertEqual(count_result, len(all_results))
 

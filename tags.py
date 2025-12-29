@@ -14,11 +14,11 @@ class Tag:
 
 class Tags:
     name: str = None
-    # TODO: не реализовано
     hint: str = None
 
     class WHERE:
         name = "Место"
+        hint = "Также добавляет иконку событию на графике"
         NOV    = Tag("Новгород",   payload={'icon': 'home.svg'})
         LOMO   = Tag("Ломоносова", payload={'icon': 'lomo.svg'})
         CRON   = Tag("Кронва",     payload={'icon': 'cron.svg'})
@@ -27,44 +27,51 @@ class Tags:
 
     class LABOR:
         name = "Деятельность"
+        hint = 'Если выбрано "Пара", то будет отображать за сколько времени нужно начать выходить'
         LESSON = Tag("Пара")
         REST   = Tag("Отдых")
         SPORT  = Tag("Спорт", active_scheme='yellow')
 
     class IMPORTANT:
         name = "Важно"
+        hint = "Добавляет красную обводку событию и делает его отслеживаемым"
         YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
     class TRANSPARENT:
         name = "Прозрачное"
+        hint = "Делает событие полупрозрачным на графике"
         YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
     class REPLACER:
         name = "Заменяющее"
+        hint = "Заменяет собой другие не-заменяющие события"
         YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
     class TRACKING:
         name = "Отслеживание"
+        hint = "Это событие будет отображаться справа сверху в маленьком окошке со всеми предстоящими событиями"
         YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
     class HIDDEN:
         name = "Скрытое"
+        hint = "Не будет отображаться в списке событий, но будет на графике"
         YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
-    # TODO: не реализовано
     class BACKGROUND:
-        name = "Задний план"
-        hint = "Само событие станет невидимым на графике, но оно поменяет задний фон самой колонки"
-        YES = Tag("Да",  active_scheme='red')
+        name = "Фоновое"
+        hint = "Само событие станет невидимым на графике, но оно поменяет цвет фона самой колонки"
+        YES = Tag("Да",  active_scheme='green')
         NO  = Tag("Нет", active_scheme='red')
 
     class _UniversalTag:
+        """Нужен для использования только в аннотациях"""
         name: str
+        hint: str
 
     @classmethod
     def dict_like(cls) -> dict[_UniversalTag, tuple[Tag]]:

@@ -2,24 +2,33 @@ import json
 import json
 import math
 import os
+import re
 import sys
+from abc import abstractmethod, ABC, ABCMeta
+from collections import defaultdict
 from datetime import datetime, date, timedelta
 from math import atan2, sin, cos, radians, ceil
-from typing import Type
+from time import time, sleep
+from typing import Type, Iterable, Callable
 
-from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory, QRectF, QPointF
+from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory, QRectF, QPointF, QPropertyAnimation, \
+    QEasingCurve
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction, QStandardItem, \
-    QStandardItemModel
+    QStandardItemModel, QTextOption, QEnterEvent
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
     QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMessageBox, QStyleOptionButton, QStyle,
-    QLayout, QBoxLayout
+    QLayout, QBoxLayout, QSpacerItem, QSizePolicy, QGraphicsOpacityEffect
 )
 
 from announced_task import AnnouncedTask
+from multidate_v2 import MultiDateWeekday, MultiDateMonthday, MultiDateParity, days_of_week, months, EventStamp, \
+    str_to_datetime, datetime_to_str, MultiDateMixer, AllTimestampsWrapper, MultiDateEmpty
 from tags import Tags, Tag, TagList
-from utils import days_of_week, months, ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time, all_periods, \
-    MultiDate, beauty_date, TimePeriod, is_main_window
+from date_utils import ScheduleEvent, rgb_to_hex, str_time, interpolate, beauty_time, \
+    MultiDateHolder, beauty_date, is_main_window
+from time_periods import all_periods, TimePeriod
+from utils import DebugTimer
 
 color_schemes = {
     'yellow': ["#FAE40E", "#FDE912", "#887007", "#C0AE0B"],
@@ -176,6 +185,27 @@ def simple_tray_action(parent, name, callback=None, enabled=True):
         action.triggered.connect(callback)
     action.setEnabled(enabled)
     return action
+
+def simple_line_edit(placeholder=None, font_size=20, font="Anonymous Pro", multi_line=False,
+                     on_text_edit=None, bold=False, italic=False):
+    edit = AutoExpandingTextEdit(70) if multi_line else QLineEdit()
+
+    if not multi_line:
+        edit.setFixedHeight(40)
+        edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    if placeholder is not None:
+        edit.setPlaceholderText(placeholder)
+
+    if on_text_edit is not None:
+        edit.textChanged.connect(on_text_edit)
+
+    font = QFont(font, font_size)
+    font.setItalic(italic)
+    font.setBold(bold)
+    edit.setFont(font)
+
+    return edit
 
 def color_select_slider(text, size, min_, max_, callback=None, font="calibri"):
     layout = QHBoxLayout()
@@ -402,13 +432,17 @@ def sidebars_ui(side_buttons: list | QVBoxLayout, opener,
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         master_layout = QVBoxLayout()
 
-        for i, (layout_type, ui_creator) in enumerate(category_options):
-            fr = QFrame()
-            layout: QHBoxLayout = layout_type()
-            ui_creator(layout)
-            layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-            fr.setLayout(layout)
-            master_layout.addWidget(fr)
+        for i, option in enumerate(category_options):
+            if isinstance(option, int):
+                master_layout.addStretch(option)
+            elif isinstance(option, list):
+                layout_type, ui_creator = option
+                fr = QFrame()
+                layout: QHBoxLayout = layout_type()
+                ui_creator(layout)
+                layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+                fr.setLayout(layout)
+                master_layout.addWidget(fr)
 
         w = QWidget()
         w.setLayout(master_layout)
@@ -423,6 +457,163 @@ def set_size_prop(app: QApplication, widget: QWidget, w, h):
         int(size.width() * (1 - w) / 2), int(size.height() * (1 - h) / 2),
         int(size.width() * w),           int(size.height() * h)
     )
+
+
+class LayoutBuilder:
+    def __init__(self, type_):
+        self.layout: QHBoxLayout | QVBoxLayout | QGridLayout = type_()
+
+    @staticmethod
+    def prepare_default_kwargs(stretch = None, alignment = None):
+        kwargs = {}
+        if stretch   is not None: kwargs["stretch"]   = stretch
+        if alignment is not None: kwargs["alignment"] = alignment
+        return kwargs
+
+    def addWidget(self, widget: QWidget, stretch = None, alignment = None):
+        self.layout.addWidget(widget, **self.prepare_default_kwargs(stretch, alignment))
+        return self
+
+    def addLayout(self, layout: QLayout, stretch = None):
+        self.layout.addLayout(layout, **self.prepare_default_kwargs(stretch))
+        return self
+
+    def addWidgetAt(self, x, y, widget: QWidget, stretch = None, alignment = None):
+        self.layout.addWidget(widget, y, x, **self.prepare_default_kwargs(stretch, alignment))
+        return self
+
+    def addLayoutAt(self, x, y, layout: QLayout, stretch = None):
+        self.layout.addLayout(layout, x, y, **self.prepare_default_kwargs(stretch))
+        return self
+
+    def addStretch(self, stretch: int):
+        self.layout.addStretch(stretch)
+        return self
+
+    def addSpacing(self, spacing: int):
+        self.layout.addSpacing(spacing)
+        return self
+
+    def build(self, alignment=None, spacing=None):
+        if alignment is not None: self.layout.setAlignment(alignment)
+        if spacing is not None: self.layout.setSpacing(spacing)
+        return self.layout
+
+    def addAllWidgets(self, ws: Iterable[QWidget], **kwargs):
+        for w in ws: self.addWidget(w, **kwargs)
+        return self
+
+
+class AutoExpandingTextEdit(QTextEdit):
+    def __init__(self, min_height, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_height = min_height
+
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().contentsChanged.connect(self.update_height)
+
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+
+    def text(self):
+        return self.toPlainText()
+
+    def update_height(self):
+        doc_height = self.document().size().height()
+        new_height = max(
+            int(doc_height) + self.contentsMargins().top() + self.contentsMargins().bottom(),
+            self.min_height
+        )
+
+        self.setFixedHeight(int(new_height))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.update_height()
+
+
+class FormulaEdit(AutoExpandingTextEdit):
+    def __init__(self, task_edit: "main.TaskForm", error_display: QLabel, font="Anonymous Pro"):
+        super().__init__(40)
+        self.setFont(QFont(font, 30))
+
+        self.task_edit = task_edit
+        self.error_display = error_display
+
+        self.selectors_count = 0
+        self.textChanged.connect(self.validate)
+
+    def update_selectors(self):
+        new_selectors = tuple(self.task_edit.get_all_date_selectors())
+        self.selectors_count = len(new_selectors)
+        if self.selectors_count > 1:
+            self.setEnabled(True)
+            self.setPlaceholderText(f'({" + ".join(map(chr, range(ord("A"), ord("A") + len(new_selectors))))})')
+            self.validate()
+
+            font = self.font()
+            font.setItalic(False)
+            font.setPointSize(30)
+            self.setFont(font)
+        else:
+            self.setDisabled(True)
+            self.setPlaceholderText("Для формулы нужно как минимум 2 условия")
+            self.setStyleValid()
+
+            font = self.font()
+            font.setItalic(True)
+            font.setPointSize(15)
+            self.setFont(font)
+
+        self.update_height()
+
+
+    def setStyleValid(self):
+        self.setStyleSheet("""
+                    color: black;
+                """)
+        self.error_display.hide()
+
+    def setStyleInvalid(self, error_msg: str):
+        self.setStyleSheet("""
+                    color: red;
+                """)
+        if error_msg:
+            self.error_display.setText(error_msg)
+            self.error_display.show()
+        else:
+            self.error_display.hide()
+
+    def validate(self):
+        if not self.text(): return self.setStyleValid()
+        try:
+            # Если в MultiDateParity передать нули в days_on и days_off, то get_all_timestamps
+            # не будет расчитывать дни, а просто сразу завершится
+            variables = {
+                chr(ord('a') + i): AllTimestampsWrapper(MultiDateEmpty(), date(1,1,1), date(1,1,1))
+                for i in range(self.selectors_count)
+            }
+            eval(MultiDateMixer.normalise_formula(self.text()), variables)
+
+        except SyntaxError as ex:
+            self.setStyleInvalid(f'Введите формулу полностью\n({ex.offset} ТУТ -> {self.text()[ex.offset-1:ex.offset+1]})')
+
+        except TypeError:
+            self.setStyleInvalid('Недопустимая операция')
+
+        except NameError as ex:
+            undefined_name = re.search(r"'(.+)'", ex.args[0]).group(0)
+            self.setStyleInvalid(f'Неизвестная переменная: {undefined_name}\n'
+                                 f'Для ссылок для события вы должны использовать буквы англиского алфавита\n'
+                                 f'Для операций: "+", "*", "and", "or", "и", "или"')
+
+        except Exception as ex:
+            self.setStyleInvalid(f'Неизвестная ошибка: {ex}\n{type(ex)}')
+
+        else:
+            self.setStyleValid()
 
 
 class InvalidSettingException(Exception):
@@ -541,12 +732,11 @@ class SingleInstanceApplication(QApplication):
         super().__init__(*args)
         self.shared_memory = QSharedMemory(unique_key)
 
-        # Проверка на существующий экземпляр
         if 'debug' in sys.argv[1:]: return
 
         if self.shared_memory.attach():
             self.alert_other_instance()
-            sys.exit(0)  # Немедленный выход при дубликате
+            sys.exit(0)
         else:
             # Создаем новую shared memory
             if not self.shared_memory.create(1):
@@ -576,7 +766,7 @@ class SpoilerOptions(QPushButton):
                 background-color: #111;
                 border: 1px solid #333;
                 padding: 10px 20px;
-                border-radius: 5px; /* добавим немного округления углов */
+                border-radius: 5px;
             }
 
             QPushButton:hover {
@@ -816,6 +1006,9 @@ class TimeSelector(QWidget):
     def get_timedur(self):
         return f'{self.get_timestr(self.min_value)}-{self.get_timestr(self.max_value)}'
 
+    def get_time_list(self):
+        return self.min_value, self.max_value
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -875,9 +1068,11 @@ class TimeSelector(QWidget):
         if type_ == 'max': painter.drawText(x - 40, y + 35, self.get_timestr(self.max_value))
 
         painter.setPen(QPen(QColor.fromHsv(color.hue(), color.saturation(), color.value()-40), dx))
+        # noinspection PyTypeChecker
         painter.drawPolygon([QPoint(x, y+dx), QPoint(x+dx, y+dx*2), QPoint(x-dx, y+dx*2)])
 
         painter.setPen(QPen(QColor.fromHsv(color.hue(), color.saturation(), color.value()+40), dx))
+        # noinspection PyTypeChecker
         painter.drawPolygon([QPoint(x, y-dx), QPoint(x+dx, y-dx*2), QPoint(x-dx, y-dx*2)])
 
     def mousePressEvent(self, event):
@@ -930,6 +1125,126 @@ class TimeSelector(QWidget):
     def position_to_value(self, x):
         return int((x - self.handle_radius) / (self.width() - 2 * self.handle_radius) * (
                 self.max_limit - self.min_limit) + self.min_limit)
+
+# Ебаный костыль
+class QABCMeta(type(QLineEdit), ABCMeta): pass
+class CheckedLineEdit(QLineEdit, ABC, metaclass=QABCMeta):
+    def __init__(self, placeholder):
+        super().__init__()
+
+        # noinspection PyTypeChecker
+        self.additional_check_callable: Callable = None
+        self.additional_check_error_name = "Неверное значение"
+
+        self.setFixedHeight(40)
+        self.setFont(QFont("Anonymous Pro", 20))
+        self.setPlaceholderText(placeholder)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.setStyleValid()
+        self.textEdited.connect(self.styleChecker)
+
+    def set_additional_check(self, additional_check, error_name=None):
+        self.additional_check_callable = additional_check
+        if error_name is not None:
+            self.additional_check_error_name = error_name
+
+    def setStyleValid(self):
+        self.setStyleSheet("""
+                    color: black;
+                """)
+
+    def setStyleInvalid(self):
+        self.setStyleSheet("""
+                    color: red;
+                """)
+
+    def styleChecker(self):
+        try:
+            value = self._parseValue()
+            if self.additional_check_callable is not None:
+                if not self.additional_check_callable(value):
+                    raise ValueError
+        except Exception:
+            self.setStyleInvalid()
+        else:
+            self.setStyleValid()
+
+    @abstractmethod
+    def _parseValue(self): raise NotImplementedError()
+
+    @abstractmethod
+    def _unparseValue(self, *args): raise NotImplementedError()
+
+    def getValue(self, do_additional_check=True, allow_empty=True, default=None):
+        if not self.text() and allow_empty: return default
+        try:
+            value = self._parseValue()
+            if self.additional_check_callable is not None and do_additional_check:
+                if not self.additional_check_callable(value):
+                    raise ValueError(self.additional_check_error_name)
+            return value
+        except ValueError:
+            if default is not None: return default
+            raise
+
+    def setValue(self, *args, do_additional_check=True):
+        if self.additional_check_callable is not None and do_additional_check:
+            if not self.additional_check_callable(args[0]):
+                raise ValueError(self.additional_check_error_name)
+        self.setText(self._unparseValue(*args))
+
+
+class PositiveIntegerSelect(CheckedLineEdit):
+    def __init__(self, placeholder):
+        super().__init__(placeholder)
+
+    def _parseValue(self):
+        if not self.text(): return None
+        return self.parseNumber(self.text())
+
+    def _unparseValue(self, new_value):
+        return str(self.parseNumber(new_value))
+
+    @staticmethod
+    def parseNumber(number_str, allow_float=False):
+        try:
+            value = float(number_str)
+        except ValueError:
+            raise ValueError("Ожидалось число")
+
+        if value < 0: raise ValueError("Ожидалось положительное число")
+
+        if allow_float: return value
+
+        if int(value) != value: raise ValueError("Ожидалось целое число")
+
+        return int(value)
+
+
+class IntegerSelect(CheckedLineEdit):
+    def __init__(self, placeholder):
+        super().__init__(placeholder)
+
+    def _parseValue(self):
+        if not self.text(): return None
+        return self.parseNumber(self.text())
+
+    def _unparseValue(self, new_value):
+        return str(self.parseNumber(new_value))
+
+    @staticmethod
+    def parseNumber(number_str, allow_float=False):
+        try:
+            value = float(number_str)
+        except ValueError:
+            raise ValueError("Ожидалось число")
+
+        if allow_float: return value
+
+        if int(value) != value: raise ValueError("Ожидалось целое число")
+
+        return int(value)
 
 
 class DateSelector(QFrame):
@@ -1023,7 +1338,8 @@ class DateSelector(QFrame):
 
         self.setFixedWidth(574)
 
-        self.is_weekday = False
+        # noinspection PyTypeChecker
+        self.multi_date_type: Type = None
         self.set_to_weekday()
 
         self.parity = 0
@@ -1058,9 +1374,10 @@ class DateSelector(QFrame):
 
             self.show_hide_button.setIcon(recolor_icon("show.svg", QColor(240, 240, 240)))
 
-            d = MultiDate()
-            self.add_multidate_state(d)
-            self.short_desc_lb.setText(str(d))
+            try:
+                self.short_desc_lb.setText(self.get_multidate().to_str())
+            except AssertionError:
+                self.short_desc_lb.setText("Неполностью заполненное условие")
             self.short_desc_lb.setFont(QFont('Calibri', 20 if len(self.short_desc_lb.text()) < 30 else 17))
 
             self.setMinimumHeight(70)
@@ -1073,6 +1390,8 @@ class DateSelector(QFrame):
         self.deleted = True
         # noinspection PyUnresolvedReferences
         self.parent.update_date_options()
+        # noinspection PyUnresolvedReferences
+        self.parent.formula_edit.update_selectors()
 
         self.deleteLater()
 
@@ -1088,7 +1407,8 @@ class DateSelector(QFrame):
         """)
 
     def set_current_date(self):
-        if self.is_weekday: self.set_to_monthday()
+        if self.multi_date_type != MultiDateMonthday:
+            self.set_to_monthday()
 
         now = datetime.now()
         for compare, btns in [
@@ -1098,7 +1418,7 @@ class DateSelector(QFrame):
         ]:
             for btn in btns: btn.setState(btn.value == compare)
 
-    def setup_values(self, weekdays, monthdays, months, years, periods):
+    def setup_week_month_values(self, weekdays, monthdays, months, years, periods):
         for btns, compares in [
             [self.weekdays_btns,  weekdays],
             [self.monthdays_btns, monthdays],
@@ -1109,6 +1429,12 @@ class DateSelector(QFrame):
             if compares is None: continue
             for btn in btns:
                 btn.setState(btn.value in compares)
+
+    def setup_parity_day_values(self, anchor: date, days_on, days_off, firstly_on):
+        self.parity_anchor_selector.set_date(anchor)
+        self.days_on_edit .setValue(days_on,  do_additional_check=False)
+        self.days_off_edit.setValue(days_off, do_additional_check=False)
+        self.change_parity_inversion(firstly_on)
 
     def get_parity(self):
         if self.parity == 0: return None
@@ -1137,12 +1463,20 @@ class DateSelector(QFrame):
         """)
         self.parity_button.setIcon(self.parity_icons[self.parity])
 
-    def set_parity(self, parity):
+    def change_parity_inversion(self, new_firstly_on=None):
+        self.firstly_on = not self.firstly_on if new_firstly_on is None else new_firstly_on
+
+        set_color_scheme(self.parity_invert_btn, "red" if self.firstly_on else "green")
+        self.parity_invert_btn.setIcon(recolor_icon(
+            "remove.svg" if self.firstly_on else "checkmark.svg", QColor(240, 240, 240)
+        ))
+
+    def set_week_parity(self, parity):
         self.change_week_parity(0 if parity is None else parity + 1)
 
     def set_to_weekday(self):
-        if self.is_weekday: return
-        self.is_weekday = True
+        if self.multi_date_type == MultiDateWeekday: return
+        self.multi_date_type = MultiDateWeekday
 
         self.btn_weekday.setStyleSheet(self.on_style)
         self.btn_monthday.setStyleSheet(self.off_style)
@@ -1153,8 +1487,8 @@ class DateSelector(QFrame):
         self.parityday_select_container.setVisible(False)
 
     def set_to_monthday(self):
-        if not self.is_weekday: return
-        self.is_weekday = False
+        if self.multi_date_type == MultiDateMonthday: return
+        self.multi_date_type = MultiDateMonthday
 
         self.btn_weekday.setStyleSheet(self.off_style)
         self.btn_monthday.setStyleSheet(self.on_style)
@@ -1165,8 +1499,8 @@ class DateSelector(QFrame):
         self.parityday_select_container.setVisible(False)
 
     def set_to_parityday(self):
-        # if not self.is_weekday: return
-        # self.is_weekday = False
+        if self.multi_date_type == MultiDateParity: return
+        self.multi_date_type = MultiDateParity
 
         self.btn_weekday.setStyleSheet(self.off_style)
         self.btn_monthday.setStyleSheet(self.off_style)
@@ -1176,16 +1510,43 @@ class DateSelector(QFrame):
         self.monthday_select_container.setVisible(False)
         self.parityday_select_container.setVisible(True)
 
-    def add_multidate_state(self, date: MultiDate):
-        date.add_state(
-            weekday  = self.selected_weekdays  if     self.is_weekday else None,
-            monthday = self.selected_monthdays if not self.is_weekday else None,
-            month    = self.selected_months,
-            year     = self.selected_years,
-            parity   = self.get_parity(),
-            time     = self.time_selector.get_timedur(),
-            periods  = self.selected_periods
-        )
+    def set_to_type(self, target_type):
+        if   target_type == MultiDateWeekday:  self.set_to_weekday()
+        elif target_type == MultiDateMonthday: self.set_to_monthday()
+        elif target_type == MultiDateParity:   self.set_to_parityday()
+        else:
+            raise TypeError(f"Неизвестный тип условия даты: {self.multi_date_type}")
+
+    def get_multidate(self) -> MultiDateHolder:
+        time = self.time_selector.get_time_list()
+        constraints = {
+            "month_constraint":  self.selected_months,
+            "year_constraint":   self.selected_years,
+            "periods_constraint": self.selected_periods,
+        }
+
+        if self.multi_date_type == MultiDateWeekday:
+            return MultiDateWeekday(time, self.selected_weekdays, **constraints)
+
+        if self.multi_date_type == MultiDateMonthday:
+            return MultiDateMonthday(time, self.selected_monthdays, **constraints)
+
+        if self.multi_date_type == MultiDateParity:
+            try:
+                anchor = self.parity_anchor_selector.get_date()
+                days_on = self.days_on_edit.getValue(default=0)
+                assert days_on > 0, "Нужно указать кол-во дней активного периода"
+                days_off = self.days_off_edit.getValue(default=0)
+                assert days_off > 0, "Нужно указать кол-во дней пассивного периода"
+            except ValueError as ex:
+                raise AssertionError(ex.args[0])
+            except InvalidSettingException:
+                raise AssertionError('Нужно указать якорь для события "раз через раз"')
+
+            return MultiDateParity(time, anchor, days_on, days_off, self.firstly_on, **constraints)
+
+
+        raise TypeError(f"Неизвестный тип условия даты: {self.multi_date_type}")
 
     def create_ui_switch(self):
         layout = QHBoxLayout()
@@ -1244,12 +1605,13 @@ class DateSelector(QFrame):
 
     def create_ui_monthday_select(self):
         self.monthday_select_container = QWidget()
-        self.monthday_select_container.setFixedHeight(250)
+        self.monthday_select_container.setFixedHeight(150)
         layout = QGridLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         for i in range(0, 31):
-            btn = SlideButton(self, self.monthday_select_container, i+1, i+1, "calibri", 15, 40)
+            btn = SlideButton(self, self.monthday_select_container, i+1, i+1, "calibri", 15, 0)
+            btn.setFixedSize(60, 30)
             self.monthdays_btns.append(btn)
 
             def on_click(btn: SlideButton):
@@ -1275,26 +1637,23 @@ class DateSelector(QFrame):
         layout = QGridLayout()
 
         # noinspection PyUnresolvedReferences
-        layout.addWidget(DaySelector(self.parent.main_window, "Якорь"), 1, 2)
+        self.parity_anchor_selector = DaySelector(self.parent.main_window, "Якорь")
+        layout.addWidget(self.parity_anchor_selector, 0, 1)
 
-        layout.addWidget(simple_label("You", 20), 1, 1)
-        layout.addWidget(simple_label("been", 20), 2, 2)
-        layout.addWidget(simple_label("trolled", 20), 3, 3)
-        # for i in range(0, 31):
-        #     btn = SlideButton(self, self.monthday_select_container, i+1, i+1, "calibri", 15, 40)
-        #     self.monthdays_btns.append(btn)
-        #
-        #     def on_click(btn: SlideButton):
-        #         if btn.value in self.selected_monthdays:
-        #             btn.setStyleSheet(self.off_style)
-        #             self.selected_monthdays.remove(btn.value)
-        #         else:
-        #             btn.setStyleSheet(self.on_style)
-        #             self.selected_monthdays.append(btn.value)
-        #
-        #     btn.setOnClick(on_click)
-        #     btn.setStyleSheet(self.off_style)
-        #     layout.addWidget(btn, i // 11, i % 11)
+        self.days_on_edit  = PositiveIntegerSelect("число")
+        self.days_off_edit = PositiveIntegerSelect("число")
+        self.parity_invert_btn = icon_button("", 50, 70, "gray", callback=lambda : self.change_parity_inversion())
+        self.firstly_on = True
+        self.change_parity_inversion(True)
+
+        layout.addWidget(simple_label("Дней активно", 15), 1, 1)
+        layout.addWidget(self.days_on_edit, 2, 1)
+
+        layout.addWidget(simple_label("Дней пассивно", 15), 1, 2)
+        layout.addWidget(self.days_off_edit, 2, 2)
+
+        layout.addWidget(simple_label("Инвертировать?", 15), 1, 3)
+        layout.addWidget(self.parity_invert_btn, 2, 3, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.parityday_select_container.setLayout(layout)
         self.layout.addWidget(self.parityday_select_container)
@@ -1420,14 +1779,27 @@ class DateSelector(QFrame):
 
     def clone_self(self):
         clone = DateSelector(self.parent)
-        clone.setup_values(self.selected_weekdays, self.selected_monthdays, self.selected_months,
-                           self.selected_years, self.selected_periods)
+        clone.setup_week_month_values(self.selected_weekdays, self.selected_monthdays, self.selected_months,
+                                      self.selected_years, self.selected_periods)
+
+        clone.parity_anchor_selector.line_edit.setText(
+            self.parity_anchor_selector.line_edit.text()
+        )
+        clone.days_on_edit.setText(self.days_on_edit.text())
+        clone.days_off_edit.setText(self.days_off_edit.text())
+        clone.firstly_on = self.firstly_on
+
         clone.change_week_parity(self.parity)
 
         clone.time_selector.set_min(self.time_selector.min_value)
         clone.time_selector.set_max(self.time_selector.max_value)
 
-        if not self.is_weekday: clone.set_to_monthday()
+        if self.multi_date_type == MultiDateWeekday:
+            clone.set_to_monthday()
+        if self.multi_date_type == MultiDateMonthday:
+            clone.set_to_monthday()
+        if self.multi_date_type == MultiDateParity:
+            clone.set_to_parityday()
 
         # noinspection PyUnresolvedReferences
         self.parent.add_date_option(clone)
@@ -1440,6 +1812,141 @@ class DateSelector(QFrame):
         for btn in [self.delete_button, self.clone_button, self.show_hide_button]:
             btn.move(self.width() - start_pos - btn.width(), 10)
             start_pos += btn.width() + between_offset
+
+
+class BubbleWidget(QWidget):
+    def __init__(self, text, width=200, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self.label = QLabel(text)
+        self.label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(0, 0, 0, 240);
+                color: white;
+                border-radius: 8px;
+                padding: 12px;
+                font-size: 14px;
+            }
+        """)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)
+        self.label.setMinimumWidth(width)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.label)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self.opacity_effect)
+
+        self._fade_in_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self._fade_in_animation.setDuration(200)
+        self._fade_in_animation.setStartValue(0.0)
+        self._fade_in_animation.setEndValue(1.0)
+        self._fade_in_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+
+        self._fade_out_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self._fade_out_animation.setDuration(200)
+        self._fade_out_animation.setStartValue(1.0)
+        self._fade_out_animation.setEndValue(0.0)
+        self._fade_out_animation.finished.connect(self.hide)
+        self._fade_out_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+
+    def showEvent(self, event):
+        self._fade_out_animation.stop()
+
+        self._fade_in_animation.stop()
+        self._fade_in_animation.start()
+        super().showEvent(event)
+
+    def fadeOutAnimation(self):
+        self._fade_in_animation.stop()
+
+        self._fade_out_animation.stop()
+        self._fade_out_animation.start()
+
+
+class WhatsThisMarker(QPushButton):
+    def __init__(self, hint: str, direction: Qt.AlignmentFlag = None, width=200):
+        super().__init__()
+        self.hint = hint
+
+        self.direction = Qt.AlignmentFlag.AlignTop if direction is None else direction
+
+        self.setIcon(QIcon("icons/whats_this.png"))
+        self.setFixedSize(30, 30)
+        self.setIconSize(QSize(30, 30))
+        self.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+            }
+        """)
+
+        self.bubble = BubbleWidget(hint, width=width)
+        self.bubble.hide()
+
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event: QEnterEvent):
+        if not self.bubble.isVisible():
+            self.update_bubble_position()
+            self.bubble.show()
+            self.bubble.raise_()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.bubble.fadeOutAnimation()
+        super().leaveEvent(event)
+
+    def hideEvent(self, event):
+        self.bubble.hide()
+        super().hideEvent(event)
+
+    def update_bubble_position(self):
+        """Обновляет позицию плашки и стрелки"""
+        button_global_pos = self.mapToGlobal(QPoint(0, 0))
+
+        # Рассчитываем позицию плашки над кнопкой
+        bubble_height = self.bubble.sizeHint().height()
+        bubble_width = self.bubble.sizeHint().width()
+
+        # Центрируем плашку над кнопкой
+        x_left   = button_global_pos.x() - bubble_width
+        x_center = button_global_pos.x() + (self.width() - bubble_width) // 2
+        x_right  = button_global_pos.x() + self.width()
+
+        y_top    = button_global_pos.y() - bubble_height
+        y_center = button_global_pos.y() + (self.height() - bubble_height) // 2
+        y_bottom = button_global_pos.y() + self.height()
+
+        if self.direction == Qt.AlignmentFlag.AlignTop:
+            self.bubble.move(int(x_center), int(y_top))
+        elif self.direction == Qt.AlignmentFlag.AlignBottom:
+            self.bubble.move(int(x_center), int(y_bottom))
+        elif self.direction == Qt.AlignmentFlag.AlignRight:
+            self.bubble.move(int(x_right), int(y_center))
+        elif self.direction == Qt.AlignmentFlag.AlignLeft:
+            self.bubble.move(int(x_left), int(y_center))
+        else:
+            raise TypeError(f"Неизвестный тип выравнивания плашки {self.direction}")
+
+    def resizeEvent(self, event):
+        if self.bubble.isVisible():
+            self.update_bubble_position()
+        super().resizeEvent(event)
+
+    def moveEvent(self, event):
+        if self.bubble.isVisible():
+            self.update_bubble_position()
+        super().moveEvent(event)
 
 
 class TimePeriodSelector(QFrame):
@@ -1515,49 +2022,35 @@ class DaySelector(QFrame):
         except:
             raise InvalidSettingException("Неверная дата!", self.line_edit)
 
+    def set_date(self, new_date: date):
+        self.line_edit.setText(datetime_to_str(new_date))
+
     def toggle_popup(self):
-        self.update_popup_position()
+        self.popup.update_position(self.edit_btn)
         self.popup.update_view()
         self.popup.show()
 
-    def update_popup_position(self):
-        btn_global_pos = self.edit_btn.mapToGlobal(QPoint(0, self.edit_btn.height()))
-        screen_geo = self.screen().availableGeometry()
-
-        popup_width = self.popup.width()
-        popup_height = self.popup.height()
-
-        # Рассчитываем позицию по X
-        x = btn_global_pos.x()
-        if x + popup_width > screen_geo.right():
-            x = screen_geo.right() - popup_width
-        x = max(x, screen_geo.left())
-
-        # Рассчитываем позицию по Y
-        y = btn_global_pos.y()
-        if y + popup_height > screen_geo.bottom():
-            y = btn_global_pos.y() - popup_height - self.edit_btn.height()
-        y = max(y, screen_geo.top())
-
-        self.popup.move(int(x), int(y))
-
 
 class CalendarPopup(QFrame):
-    def __init__(self, parent, obj_to_edit: QWidget, pick_date: [datetime | date] = None, main_window=None):
+    def __init__(self, parent, obj_to_edit: QWidget | Callable, pick_date: datetime | date = None,
+                 main_window=None, custom_style_callback: Callable[[date, "SegmentedButton"], None]=None):
         super().__init__(parent)
         if pick_date is None: pick_date = datetime.today()
         self.pick_date = date(pick_date.year, pick_date.month, 1)
+        self.original_pick_date = pick_date.date() if isinstance(pick_date, datetime) else pick_date
 
         assert is_main_window(main_window), 'Должен быть класс главного окна'
         self.main_window = main_window
 
         self.obj_to_edit = obj_to_edit
+        self.custom_style_callback = custom_style_callback
 
         self.setWindowFlags(Qt.WindowType.Popup)
         self.setObjectName("calendarFrame")
         self.setStyleSheet("""
             QWidget {
                 background: white;
+                color: black;
             }
             #calendarFrame {
                 border: 2px solid #000000;
@@ -1576,6 +2069,9 @@ class CalendarPopup(QFrame):
         control_layout = QHBoxLayout()
         self.month_year_label = simple_label("...", 18)
         self.month_year_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.month_year_label.setStyleSheet("""
+            color: black;
+        """)
         control_layout.addWidget(icon_button("left.svg",  30, 35, 'blue', callback=lambda : self.cycle(-1)))
         control_layout.addWidget(self.month_year_label)
         control_layout.addWidget(icon_button("right.svg", 30, 35, 'blue', callback=lambda : self.cycle(+1)))
@@ -1607,74 +2103,137 @@ class CalendarPopup(QFrame):
         self.day_buttons = []
         # self.update_view()
 
+    def update_position(self, anchor_widget: QWidget):
+        btn_global_pos = anchor_widget.mapToGlobal(QPoint(0, anchor_widget.height()))
+        screen_geo = self.screen().availableGeometry()
+
+        popup_width = self.width()
+        popup_height = self.height()
+
+        # Рассчитываем позицию по X
+        x = btn_global_pos.x()
+        if x + popup_width > screen_geo.right():
+            x = screen_geo.right() - popup_width
+        x = max(x, screen_geo.left())
+
+        # Рассчитываем позицию по Y
+        y = btn_global_pos.y()
+        if y + popup_height > screen_geo.bottom():
+            y = btn_global_pos.y() - popup_height - anchor_widget.height()
+        y = max(y, screen_geo.top())
+
+        self.move(int(x), int(y))
+
     def update_view(self):
         for btn in self.day_buttons:
             btn.deleteLater()
         self.day_buttons.clear()
 
         self.month_year_label.setText(
-            f"{months[self.pick_date.month - 1][2].capitalize()} {self.pick_date.year}"
+            f"{months[self.pick_date.month-1][2].capitalize()} {self.pick_date.year}"
         )
 
+        width = 6
+        height = 7
         from_day = self.pick_date - timedelta(days=self.pick_date.weekday())
+        to_day   = from_day + timedelta(days=width * height - 1)
 
-        events: list[ScheduleEvent] = [e for e in self.main_window.scheduled_events if not e.tags.have(Tags.HIDDEN.YES)]
-        for index in range(6*7):
+        btns: list[dict] = []
+        for index in range(width*height):
             day = from_day + timedelta(days=index)
             is_current_month = day.month == self.pick_date.month
 
-            btn = SegmentedButton(day, is_today=day == date.today(), is_bold=is_current_month)
+            btn = SegmentedButton(day, is_bold=is_current_month)
 
-            tooltips = []
-            colors = []
-            for event in events:
-                if not event.can_happen(day): continue
-                colors.append(QColor(*event.color))
-                tooltips.append(event.name)
+            if day == date.today():
+                btn.draw_circle_offset = -1
+                btn.setStyleSheet(
+                    # background: rgba(0, 120, 212, 0.8);
+                    """
+                        SegmentedButton {
+                            border: 3px solid #0078d4;
+                            border-radius: 5px;
+                            background: rgba(0, 120, 212, 0.1);
+                            color: black;
+                            font-weight: bold;
+                        }
+                        SegmentedButton:hover {
+                            border: 3px solid #0068c4;
+                            background: rgba(0, 120, 212, 0.2);
+                        }
+                    """
+                )
 
-            if tooltips: btn.setToolTip("\n".join(tooltips))
-            btn.set_colors(colors)
+            if self.custom_style_callback is not None:
+                self.custom_style_callback(day, btn)
+
+            # if day != day:
+            #     btn.draw_circle_offset = -1
+            #     btn.setStyleSheet(
+            #         # background: rgba(0, 120, 212, 0.8);
+            #         """
+            #             SegmentedButton {
+            #                 border: 3px solid #7800d4;
+            #                 border-radius: 5px;
+            #                 background: transparent;
+            #                 color: black;
+            #                 font-weight: bold;
+            #             }
+            #             SegmentedButton:hover {
+            #                 border: 5px solid #0078d4;
+            #             }
+            #         """
+            #     )
 
             # noinspection PyUnresolvedReferences
-            btn.clicked.connect(lambda _, d=day: self.date_selected(d))
+            btn.clicked.connect(lambda _, d=day: self.on_date_selected(d))
 
             self.grid_layout.addWidget(btn, *divmod(index + 7, 7))
             self.day_buttons.append(btn)
+            # noinspection PyTypeChecker
+            btns.append(defaultdict(list, [("btn", btn)]))
 
-    def date_selected(self, day):
-        # noinspection PyUnresolvedReferences
-        self.obj_to_edit.setText(beauty_date(day))
+        events: list[ScheduleEvent] = [e for e in self.main_window.scheduled_events if not e.tags.have(Tags.HIDDEN.YES)]
+
+        for event in events:
+            for stamp in event.get_final_timestamps(from_day, to_day):
+                index = (stamp.get_date() - from_day).days
+                btns[index]["colors"].append(QColor(*event.color))
+                btns[index]["tooltips"].append(event.name)
+
+        for entry in btns:
+            if "tooltips" in entry:
+                entry["btn"].setToolTip("\n".join(entry["tooltips"]))
+            entry["btn"].set_colors(entry["colors"])
+
+    def on_date_selected(self, day):
+        if isinstance(self.obj_to_edit, QWidget):
+            # noinspection PyUnresolvedReferences
+            self.obj_to_edit.setText(beauty_date(day))
+        elif isinstance(self.obj_to_edit, Callable):
+            self.obj_to_edit(day)
         self.hide()
 
     def cycle(self, offset):
-        self.pick_date = self.pick_date.replace(month=self.pick_date.month + offset)
+        for _ in range(abs(offset)):
+            self.pick_date = (self.pick_date.replace(day=1) + timedelta(days=31 if offset > 0 else -1)).replace(day=1)
         self.update_view()
 
 
 class SegmentedButton(QPushButton):
-    def __init__(self, day: date, is_today, is_bold, colors=None, parent=None):
+    def __init__(self, day: date, is_bold, colors=None, parent=None):
         super().__init__(str(day.day))
         self.setParent(parent)
         self.colors = colors or []
         self.setFixedSize(30, 30)
-
-        self.is_today = is_today
         self.is_bold = is_bold
 
+        self.ignore_paint = False
+        self.crossed = False
+
+        self.draw_circle_offset = 2
+
         self.setStyleSheet(
-        """
-            SegmentedButton {
-                border: 3px solid #0078d4;
-                border-radius: 5px;
-                background: rgba(0, 120, 212, 0.8);
-                color: black;
-                font-weight: bold;
-            }
-            SegmentedButton:hover {
-                background: rgba(0, 120, 212, 0.9);
-            }
-        """
-            if is_today else
         f"""
             SegmentedButton {{
                 border: {'1px solid #ccc' if is_bold else '1px solid #aaa'};
@@ -1693,23 +2252,34 @@ class SegmentedButton(QPushButton):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if not self.colors or self.is_today:
-            return
+        if self.ignore_paint: return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        offset = 2
-        rect = QRectF(offset, offset, self.width() - offset * 2, self.height() - offset * 2)
+        if self.colors:
+            rect = QRectF(
+                self.draw_circle_offset, self.draw_circle_offset,
+                self.width() - self.draw_circle_offset * 2, self.height() - self.draw_circle_offset * 2)
 
-        angle_offset = len(self.colors) * 45 - 45 if 1 <= len(self.colors) <= 2 else 0
-        angle = 360.0 / len(self.colors)
+            angle_offset = len(self.colors) * 45 - 45 if 1 <= len(self.colors) <= 2 else 0
+            angle = 360.0 / len(self.colors)
 
-        painter.setPen(QColor(0, 0, 0, 0))
-        for i, color in enumerate(self.colors):
-            color.setAlpha(120)
-            painter.setBrush(color)
-            painter.drawPie(rect, int(i * angle * 16 + angle_offset * 16), int(angle * 16))
+            painter.setPen(QColor(0, 0, 0, 0))
+            for i, color in enumerate(self.colors):
+                color.setAlpha(120)
+                painter.setBrush(color)
+                painter.drawPie(rect, int(i * angle * 16 + angle_offset * 16), int(angle * 16))
+
+        if self.crossed:
+            painter.setPen(QPen(QColor(255, 0, 0), 2))  # Красная линия толщиной 2px
+
+            # Рисуем крест (две диагональные линии)
+            margin = 3  # Отступ от краев
+            painter.drawLine(margin, margin,
+                             self.width() - margin, self.height() - margin)
+            painter.drawLine(self.width() - margin, margin,
+                             margin, self.height() - margin)
 
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
@@ -1960,8 +2530,8 @@ class EventSelector(QFrame):
             self.app.create_task_add_form(button.event)
             self.setHidden(True)
 
-        all_sorted = sorted(((e, e.get_next_date(datetime.now().date())[0]) for e in events),
-                            key=lambda x: x[0].get_sort_value() if x[1] is None else x[1].timestamp())
+        all_sorted = sorted(((e, e.get_next_timestamp(datetime.now().date())) for e in events),
+                            key=lambda x: x[0].get_sort_value() if x[1] is None else x[1].get_start_datetime().timestamp())
 
         for i, (name, is_hidden, is_expired) in enumerate([
             ["Основные", False, False],
@@ -2100,11 +2670,15 @@ class UpcomingEvents(QFrame):
             w.deleteLater()
 
         # noinspection PyUnresolvedReferences
-        now = self.app.get_now()
+        now: datetime = self.app.get_now()
         def tracking(event: ScheduleEvent):
-            start_date, end_date = event.get_next_date(now)
-            if start_date is None or now > end_date: return False
             if event.tags.have(Tags.TRACKING.NO): return False
+            if (Tags.TRACKING not in event.tags) and (not event.tags.have(Tags.IMPORTANT.YES)): return False
+
+            next_stamp = event.get_next_timestamp(now.date())
+            if next_stamp is None: return False
+            start_date, end_date = next_stamp.as_datetimes()
+            if now > end_date: return False
 
             if event.tags.have(Tags.IMPORTANT.YES): return True
 
@@ -2114,8 +2688,30 @@ class UpcomingEvents(QFrame):
 
             return False
 
+        # TODO: почему-то если поставить огромную конечную дату, то оно дико виснет
+        # TODO: и ещё если убрать все события без ограничения по времени то код супер быстро отрабатывает
+        # events = [event for event in events if event.times != 0]
+
+        with DebugTimer("Вычисление дат (+месяц)"):
+            st = time()
+            next_dates2 = {
+                event: next(event.get_final_timestamps(now.date(), now.date() + timedelta(days=31)), None)
+                for event in events
+            }
+            print("2", time() - st)
+
+        # with DebugTimer("Вычисление дат (9999 год)"):
+        #     st = time()
+        #     next_dates = {
+        #         event: next(event.get_final_timestamps(now.date(), date(9998, 1, 1)), None)
+        #         for event in events
+        #     }
+        #     print("1", time() - st)
+        return
+
+        # event.get_next_timestamp(now.date()).get_start_datetime()
         sorted_events = sorted(
-            ((event, event.get_next_date(now)[0]) for event in events if tracking(event)),
+            ((event, None) for event in events if tracking(event)),
             key=lambda x: x[1])
 
         if not sorted_events:
@@ -2154,7 +2750,7 @@ class UpcomingEvents(QFrame):
             event: ScheduleEvent
             button: EventButton
 
-            start_date, end_date = event.get_next_date(now)
+            start_date, end_date = event.get_next_timestamp(now).as_datetimes()
             if start_date is None or now > end_date: return self.update_events(self.events.copy())
 
             minutes = ceil((start_date - now).total_seconds() / 60)
