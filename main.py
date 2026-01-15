@@ -6,21 +6,23 @@ import traceback
 import threading
 from datetime import datetime, timedelta, date
 from random import randint
+from time import sleep
 
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRectF, QRect, QDate, QPointF
 from PyQt6.QtGui import QIcon, QFont, QColor, QPainter, QPen, QPaintDevice, QPolygonF
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFrame, QPushButton, QHBoxLayout, \
     QLabel, QScrollArea, QSizePolicy, QGridLayout, QGraphicsOpacityEffect, QSystemTrayIcon, QMenu, QTimeEdit, QDateEdit, \
-    QSpacerItem
+    QSpacerItem, QColorDialog
 
 from app_killer import app_killer_thread
 from gui_additions import DateSelector, simple_label, icon_button, set_color_scheme, load_font, \
-    new_separator, simple_button, ui_shadow, TagSelectButton, color_select_slider, simple_line_input, CancelDate, \
+    new_separator, simple_button, ui_shadow, TagSelectButton, simple_line_input, CancelDate, \
     EventSelector, simple_text_input, simple_tray_action, recolor_icon, draw_arrow, \
-    paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup, framed_ui, set_size_prop, \
+    paint_highlighted_border, UpcomingEvents, AnnouncedTaskSelect, AnnouncedTaskSetup, set_size_prop, \
     SingleInstanceApplication, sidebars_ui, DaySelector, TimePeriodSelector, InvalidSettingException, ErrorArrowDrawer, \
-    sidebars_layout, simple_line_edit, WhatsThisMarker, LayoutBuilder, CalendarPopup, FormulaEdit, SegmentedButton
+    sidebars_layout, simple_line_edit, WhatsThisMarker, LayoutBuilder, CalendarPopup, FormulaEdit, SegmentedButton, \
+    AdvancedColorSelector, color_schemes
 from multidate_v2 import time_stamp_to_str, months, days_of_week, MultiDateMixer, EventStamp, MultiDateWeekday, \
     MultiDateParity
 from tags import Tags, TagList
@@ -115,6 +117,9 @@ class ScheduleEventView(QFrame):
                 padding: 5px;
                 font-size: 14px;
                 font-family: calibri;
+            }}
+            #eventFrame QWidget {{
+                color: white;
             }}
         """)
 
@@ -357,13 +362,13 @@ class TimeColumnView(QFrame):
         self.is_important = False
         self.background_colors.clear()
 
-        # TODO: если много раз жать кнопку для открытия списка событий то заголовок будет двигаться ниже и ниже
         for event in self.app.scheduled_events:
             if not event.can_occur(self.now): continue
             if Tags.BACKGROUND.YES in event.tags:
                 if event.color not in self.background_colors:
                     self.background_colors.append(event.color)
-                continue
+                if not Tags.HIDDEN.NO in event.tags:
+                    continue
             for stamp in event.get_final_timestamps(self.now):
                 events_and_stamps.append([event, stamp])
 
@@ -886,6 +891,14 @@ class TaskForm(QFrame):
         self.side_layout, self.view_layout = sidebars_layout(self.main_layout, title="Настройки")
         self.side_layout.addStretch(-1)
 
+        self.main_scroll = QScrollArea(self)
+        self.main_scroll.setWidgetResizable(True)
+        self.main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        form_widget = QWidget()
+        form_widget.setLayout(self.main_layout)
+        self.main_scroll.setWidget(form_widget)
+
         self.tabs = {}
         self.side_buttons = []
 
@@ -924,14 +937,6 @@ class TaskForm(QFrame):
         self.create_ui_finish_buttons(self.side_layout)
 
         if to_edit: self.load_task(to_edit)
-
-        self.main_scroll = QScrollArea(self)
-        self.main_scroll.setWidgetResizable(True)
-        self.main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        form_widget = QWidget()
-        form_widget.setLayout(self.main_layout)
-        self.main_scroll.setWidget(form_widget)
 
         self.main_layout.setSpacing(5)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -1045,33 +1050,18 @@ class TaskForm(QFrame):
         if i is not None: self.color_value[i] = new_color_hsv
         else:
             self.color_value = new_color_hsv
-            self.slider_hue.setValue(new_color_hsv[0])
-            self.slider_sat.setValue(new_color_hsv[1])
-            self.slider_val.setValue(new_color_hsv[2])
+            self.color_picker.set_color(QColor.fromHsv(*new_color_hsv))
 
-        h, s, v = self.color_value
-        col1 = rgb_to_hex(QColor.fromHsv(h, s, v).getRgb())
-        col2 = rgb_to_hex(QColor.fromHsv(h, s, min(v+40, 255)).getRgb())
-        col3 = rgb_to_hex(QColor.fromHsv(h, s, max(v-40, 0)).getRgb())
-        col4 = rgb_to_hex(QColor.fromHsv(h, s, max(v-20, 0)).getRgb())
-
-        self.color_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #{col1};
-                border-radius: 10px;
-                border: 5px solid #{col4};
-                color: #f0f0f0;
-            }}
-            QPushButton::hover {{
-                background-color: #{col2};
-                color: #fff;
-            }}
-            QPushButton::pressed {{
-                border: 5px solid #{col3};
-                background-color: #{col4};
-                color: #eee;
-            }}
-        """)
+    def pick_color(self):
+        dialog_result = QColorDialog.getColor(
+            QColor.fromHsv(*self.color_value, 255), self,
+            "Выбор цвета",
+            QColorDialog.ColorDialogOption.NoEyeDropperButton
+        )
+        if sum(dialog_result.getRgb()[:3]) == 0: return
+        self.update_color(
+            dialog_result.getHsv()[:3]
+        )
 
     def copy_color(self):
         app.clipboard().setText(rgb_to_hex(QColor.fromHsv(*self.color_value).getRgb()))
@@ -1091,13 +1081,13 @@ class TaskForm(QFrame):
     def create_ui_task_name(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Название задачи", 30))
 
-        self.input_name = simple_line_input("Мои (не)любимые занятия", 20, italic=True)
+        self.input_name = simple_line_input("Мои (не)любимые занятия", 20, bold=True)
         layout.addWidget(self.input_name)
 
     def create_ui_task_desc(self, layout: QVBoxLayout):
         layout.addWidget(simple_label("Описание задачи", 30))
 
-        self.input_desc = simple_line_edit("Необязательное поле", 20, multi_line=True, italic=True)
+        self.input_desc = simple_line_edit("Необязательное поле", 20, multi_line=True)
         layout.addWidget(self.input_desc)
 
     def create_ui_date_selector(self, layout):
@@ -1270,7 +1260,7 @@ class TaskForm(QFrame):
     def create_ui_tag_select(self, layout: QVBoxLayout):
         self.first_tag_btns = []
 
-        layout.addWidget(simple_label("Выбор тэгов", 35))
+        layout.addWidget(simple_label("Выбор тегов", 35))
         layout.addWidget(new_separator(h=4))
         for tag_group, tags in Tags.dict_like().items():
             layout.addSpacing(10)
@@ -1308,31 +1298,53 @@ class TaskForm(QFrame):
             layout.addWidget(new_separator(h=4))
 
     def create_ui_color_select(self, layout: QVBoxLayout):
-        self.color_btn = QPushButton()
-        self.color_btn.setFixedHeight(50)
-        set_color_scheme(self.color_btn, 'yellow')
-
-        l1, self.slider_hue = color_select_slider("HUE", 40, 0, 360,
-                                                  callback=lambda x: self.update_color(x, 0))
-        l2, self.slider_sat = color_select_slider("SAT", 40, 0, 255,
-                                                  callback=lambda x: self.update_color(x, 1))
-        l3, self.slider_val = color_select_slider("VAL", 40, 0, 255,
-                                                  callback=lambda x: self.update_color(x, 2))
-
+        self.color_picker = AdvancedColorSelector()
+        self.color_picker.colorChanged.connect(
+            lambda qcol: self.update_color([qcol.hue(), qcol.saturation(), qcol.value()])
+        )
+        self.color_picker.tracers.extend((
+            QColor.fromRgb(*event.color)
+            for event in self.main_window.scheduled_events
+            if Tags.HIDDEN.YES not in event.tags
+        ))
         self.update_color([randint(0, 360), randint(200, 255), randint(200, 255)])
 
-        sub_layout = QHBoxLayout()
-        sub_layout.addWidget(icon_button("pick.svg",  50, 70, 'yellow', icon_color=(0, 0, 0),
-                                         callback=self.copy_color))
-        sub_layout.addWidget(self.color_btn)
-        sub_layout.addWidget(icon_button("brush.svg", 50, 70, 'yellow', icon_color=(0, 0, 0),
-                                         callback=self.paste_color))
-
         layout.addWidget(simple_label("Выбор цвета", 35))
-        layout.addLayout(l1)
-        layout.addLayout(l2)
-        layout.addLayout(l3)
-        layout.addLayout(sub_layout)
+        layout.addLayout(
+            LayoutBuilder(QHBoxLayout)
+            .addWidget(self.color_picker)
+            .addSpacing(10)
+            .addLayout(
+                LayoutBuilder(QVBoxLayout)
+                .addStretch(-1)
+                .addWidget(icon_button("pick.svg",  50, 70, 'yellow', icon_color=(0, 0, 0),
+                                       callback=self.pick_color))
+                .addWidget(icon_button("copy.svg",  50, 70, 'blue', icon_color=(0, 0, 0),
+                                       callback=self.copy_color))
+                .addWidget(icon_button("paste.svg", 50, 70, 'blue', icon_color=(0, 0, 0),
+                                       callback=self.paste_color))
+                .build()
+            )
+            .addLayout(
+                LayoutBuilder(QVBoxLayout)
+                .addWidget(simple_label("Быстрый выбор", 15))
+                .addLayout(
+                    LayoutBuilder(QGridLayout)
+                    .setCurrentAlignment(Qt.AlignmentFlag.AlignRight)
+                    .addAllWidgetsAt([
+                        (i % 6, i // 6, icon_button(
+                            "", 30, 30, scheme,
+                            callback=lambda *, color_hex=colors[0]: self.update_color(QColor(color_hex).getHsv())
+                        ))
+                        for i, (scheme, colors) in enumerate(color_schemes.items())
+                    ])
+                    .build()
+                )
+                .addStretch(-1)
+                .build()
+            )
+            .build()
+        )
 
     def create_ui_finish_buttons(self, layout: QVBoxLayout):
         btns_layout = QVBoxLayout()
@@ -1380,12 +1392,12 @@ class TaskForm(QFrame):
                 selector.setup_parity_day_values(
                     multi_date.anchor, multi_date.days_on, multi_date.days_off, multi_date.firstly_on
                 )
-            else:
-                save_state = multi_date.to_json()
-                selector.setup_week_month_values(save_state.get('dayW'), save_state.get('dayM'), save_state.get('months'),
-                                                 save_state.get('years'), save_state.get('periods'))
 
-            # selector.set_week_parity(save_state.get('parity'))
+            save_state = multi_date.to_json()
+            selector.setup_week_month_values(save_state.get('dayW'), save_state.get('dayM'), save_state.get('months'),
+                                             save_state.get('years'), save_state.get('periods'))
+
+            selector.set_week_parity(save_state.get('week_parity'))
 
             selector.time_selector.set_min(multi_date.time[0])
             selector.time_selector.set_max(multi_date.time[1])
@@ -1436,7 +1448,6 @@ class TaskForm(QFrame):
             else:
                 formula = None
 
-            # пайчарм аутист
             # noinspection PyTypeChecker
             multi_date = MultiDateMixer(map(DateSelector.get_multidate, selectors), formula)
 
@@ -1446,7 +1457,6 @@ class TaskForm(QFrame):
             w = self.announced_task_layout.itemAt(i).widget()
             if not isinstance(w, AnnouncedTaskSetup): continue
             tasks.append(w.build_task())
-
 
         return ScheduleEvent(
             self.input_name.text(), multi_date,
@@ -1500,6 +1510,13 @@ class TaskForm(QFrame):
         if k == 13:  # ENTER
             self.finish()
 
+
+# TODO: переделать выбор цвета и даты создания, добавить возможность создавать кастомные периоды, мб добавить больше элементов для попапа-календаря
+# DONE: 1. выбор цвета
+# TODO: 2. дата создания
+# TODO: 3. кастомные периоды
+# TODO: 4. чётная/нечётная неделя
+
 class MainWindow(QMainWindow):
     def __init__(self, debug=False, mock_time=False):
         super().__init__()
@@ -1522,11 +1539,12 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icons/app.svg"))
 
         self.font_skolar = load_font("Skolar PE Variable Regular.ttf")
+
         self.day_offset = -self.get_now().weekday()
 
         self.views_height = self.cfg.view_scale
 
-        self.setStyleSheet("background-color: #FFFFFF;")
+        self.setStyleSheet("background-color: #FFFFFF; color: black;")
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -1535,17 +1553,11 @@ class MainWindow(QMainWindow):
         self.time_columns: list[TimeColumnView] = []
         self.scheduled_events: list[ScheduleEvent] = list(self.cfg.events)
 
-        # TEST
-        prog = next(e for e in self.scheduled_events if "Прог" in e.name)
-        print(prog)
-        print(prog.multi_date)
-        print(*tuple(prog.get_final_timestamps(date(2025, 12, 22), date(2025, 12, 28))), sep="\n")
-
         self.create_ui_calendar()
         self.create_ui_schedule_view()
         self.create_ui_settings()
 
-        self.task_form = None
+        self.task_form: TaskForm = None
         self.settings_form = None
 
         central_widget = QWidget()
@@ -1567,11 +1579,8 @@ class MainWindow(QMainWindow):
         self.announce_timer.timeout.connect(self.announcements_checker)
         self.announce_timer.start(10 if self.mock_time else 1000)
 
-        self.fell_asleep_timer = QTimer(self)
-        # noinspection PyUnresolvedReferences
-        self.fell_asleep_timer.timeout.connect(self.asleeps_checker)
         if not self.mock_time:
-            self.fell_asleep_timer.start(10_000)
+            threading.Thread(target=self.asleeps_checker, daemon=True).start()
 
         self.update_schedule_view()
         self.loaded = True
@@ -1588,12 +1597,15 @@ class MainWindow(QMainWindow):
             event.exec_announced(now)
 
     def asleeps_checker(self):
-        now = datetime.now()
-        day = (now - timedelta(hours=TimeColumnView.min_hour)).date()
-        minutes = now.time().hour * 60 + now.time().minute
+        while True:
+            now = datetime.now()
+            day = (now - timedelta(hours=TimeColumnView.min_hour)).date()
+            minutes = now.time().hour * 60 + now.time().minute
 
-        self.cfg.asleeps[str(day)] = minutes
-        self.cfg.save(to_file=False)
+            self.cfg.asleeps[str(day)] = minutes
+            self.cfg.save(to_file=False)
+
+            sleep(10)
 
     def create_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -1738,8 +1750,9 @@ class MainWindow(QMainWindow):
         if self.events_list.isVisible():
             self.events_list.setHidden(True)
         else:
-            self.events_list.set_events(self.scheduled_events)
-            self.events_list_update_pos()
+            with DebugTimer("Открытее списка событий"):
+                self.events_list.set_events(self.scheduled_events)
+                self.events_list_update_pos()
 
     def update_calendar(self):
         for i in range(self.calendar_days_layout.count()):
@@ -1803,7 +1816,7 @@ class MainWindow(QMainWindow):
 
         # Другая неделя
         if now_date - timedelta(days=now_date.weekday()) != day - timedelta(days=day.weekday()):
-            css.setdefault("background-color", '#bbb')
+            css.setdefault("background-color", '#ccc')
 
         frame.setStyleSheet(''.join([f'{k}:{v};' for k, v in css.items()]))
 
@@ -1826,7 +1839,13 @@ class MainWindow(QMainWindow):
         self.update_schedule_view()
 
     def create_task_add_form(self, to_edit=None):
-        if self.task_form: self.task_form.close()
+        if self.task_form:
+            if self.task_form.isHidden():
+                self.task_form.close()
+            else:
+                self.task_form.setFocus()
+                self.task_form.raise_()
+                return
         self.task_form = TaskForm(self, to_edit)
         self.task_form.show()
 
@@ -1892,7 +1911,6 @@ class MainWindow(QMainWindow):
         QTimer().singleShot(1, lambda : self.resize_columns())
 
     def update_schedule_view(self):
-        # TODO: чё оно такое долгое
         self.upcoming_events.update_events(self.scheduled_events)
 
         for event in self.scheduled_events:

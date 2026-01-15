@@ -1,5 +1,6 @@
 def levenstein(str_1, str_2):
     # Скопировано с https://habr.com/ru/articles/676858/
+    # Чё это за фигня
     n, m = len(str_1), len(str_2)
     if n > m:
         str_1, str_2 = str_2, str_1
@@ -32,13 +33,14 @@ def is_key_close(char1, char2):
 
 
 def get_key_coords(char: str):
-    if ord("а") <= ord(char) <= ord("я"):
+    target = char.lower()
+    if ord("а") <= ord(target) <= ord("я"):
         keyboard_layout = [
             "йцукенгшщзхъ",
             "фывапролджэ",
             "ячсмитьбю"
         ]
-    elif ord("a") <= ord(char) <= ord("z"):
+    elif ord("a") <= ord(target) <= ord("z"):
         keyboard_layout = [
             "qwertyuiop",
             "asdfghjkl",
@@ -46,7 +48,6 @@ def get_key_coords(char: str):
         ]
     else:
         return None, None
-    target = char.lower()
     for y, keyboard_line in enumerate(keyboard_layout):
         x = keyboard_line.find(target)
         if x != -1: return x, y

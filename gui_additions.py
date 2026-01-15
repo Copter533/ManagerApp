@@ -9,12 +9,13 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta
 from math import atan2, sin, cos, radians, ceil
 from time import time, sleep
-from typing import Type, Iterable, Callable
+from typing import Type, Iterable, Callable, Any
 
 from PyQt6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QSharedMemory, QRectF, QPointF, QPropertyAnimation, \
-    QEasingCurve
+    QEasingCurve, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPen, QFontDatabase, QAction, QStandardItem, \
-    QStandardItemModel, QTextOption, QEnterEvent
+    QStandardItemModel, QTextOption, QEnterEvent, QConicalGradient, QPainterPath, QLinearGradient, QBrush
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QPushButton, QFrame, QGridLayout, QGraphicsDropShadowEffect, QSlider,
     QLineEdit, QVBoxLayout, QScrollArea, QTextEdit, QApplication, QComboBox, QMessageBox, QStyleOptionButton, QStyle,
@@ -36,7 +37,20 @@ color_schemes = {
     'red':    ["#D72801", "#F63D00", "#601500", "#9B1602"],
     'blue':   ["#0094D8", "#00A4E8", "#004565", "#0063A0"],
     'gray':   ["#9F9F9F", "#AFAFAF", "#3F3F3F", "#6F6F6F"],
-    'white':  ["#EDEDE1", "#F0F0F1", "#CDCDC1", "#555"]
+    'white':  ["#EDEDE1", "#F0F0F1", "#CDCDC1", "#555"],
+
+    'purple':  ["#9B51E0", "#AD65F0", "#4A2868", "#7A3FB3"],
+    'orange':  ["#FF9900", "#FFAD33", "#804D00", "#CC7A00"],
+    'teal':    ["#00B3B3", "#00CCCC", "#005959", "#008080"],
+    'pink':    ["#FF66B2", "#FF80C1", "#803359", "#CC6699"],
+    'brown':   ["#A0522D", "#B56531", "#502916", "#804020"],
+    'cyan':    ["#00CCFF", "#33D6FF", "#006680", "#00A3CC"],
+    'lime':    ["#99FF00", "#ADFF2F", "#4C8000", "#7ACC00"],
+    'indigo':  ["#4B0082", "#5A00A3", "#250041", "#3A0066"],
+    'magenta': ["#FF00FF", "#FF33FF", "#800080", "#CC00CC"],
+    'coral':   ["#FF7F50", "#FF9A7A", "#803F28", "#CC6540"],
+    'slate':   ["#708090", "#7E8C9E", "#384048", "#5A6673"],
+    'gold':    ["#FFBF00", "#FFCC33", "#805F00", "#CC9900"],
 }
 
 def set_color_scheme(element, name):
@@ -59,16 +73,16 @@ def set_color_scheme(element, name):
         }}
     """)
 
-def set_custom_color_scheme(element, r, g, b, hover_offset=40, click_offset=-40, border_offset=-20,
+def set_custom_color_scheme(element, r, g, b, alpha=255, *, hover_offset=40, click_offset=-40, border_offset=-20,
                             addition="", element_name="QPushButton", after=""):
     col_rgb = QColor.fromRgb(r, g, b)
     h = col_rgb.hue()
     s = col_rgb.saturation()
     v = col_rgb.value()
-    col1 = rgb_to_hex(QColor.fromHsv(h, s, v).getRgb())
-    col2 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + hover_offset))).getRgb())
-    col3 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + click_offset))).getRgb())
-    col4 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + border_offset))).getRgb())
+    col1 = rgb_to_hex(QColor.fromHsv(h, s, v, alpha).getRgb())
+    col2 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + hover_offset)), alpha).getRgb())
+    col3 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + click_offset)), alpha).getRgb())
+    col4 = rgb_to_hex(QColor.fromHsv(h, s, max(0, min(255, v + border_offset)), alpha).getRgb())
 
     element.setStyleSheet(f"""
         {element_name} {{
@@ -110,10 +124,11 @@ def recolor_icon(path, color: QColor, scale=1):
 
     return QIcon(pixmap)
 
-def simple_label(name, size, font="Calibri", fixed_width=None, bold=False, italic=False):
+def simple_label(name, size, font="Calibri", fixed_width=None, bold=False, italic=False, style=None):
     lb = QLabel(name)
     lb.setAlignment(Qt.AlignmentFlag.AlignCenter)
     if fixed_width: lb.setFixedWidth(fixed_width)
+    if style: lb.setStyleSheet(style)
     f = QFont(font, size)
 
     f.setBold(bold)
@@ -165,7 +180,8 @@ def simple_text_input(default_text, font_size, font="calibri", bold=False, itali
 
     return text_edit
 
-def simple_combo_box(options, font_size, font="calibri", bold=False, italic=False):
+def simple_combo_box(options, font_size, font="calibri", bold=False, italic=False,
+                     icon_size=None, on_change=None, current: int | None = None):
     font = QFont(font, font_size)
     font.setItalic(italic)
     font.setBold(bold)
@@ -174,7 +190,15 @@ def simple_combo_box(options, font_size, font="calibri", bold=False, italic=Fals
     box.setFont(font)
     box.setStyleSheet("border-bottom: 3px solid lightblue;")
 
-    if options: box.addItems(options)
+    for option in options:
+        if isinstance(option, (tuple, list)):
+            box.addItem(*option)
+        else:
+            box.addItem(option)
+
+    if icon_size: box.setIconSize(QSize(icon_size, icon_size))
+    if current: box.setCurrentIndex(current)
+    if on_change: box.currentIndexChanged.connect(on_change)
 
     return box
 
@@ -207,17 +231,22 @@ def simple_line_edit(placeholder=None, font_size=20, font="Anonymous Pro", multi
 
     return edit
 
-def color_select_slider(text, size, min_, max_, callback=None, font="calibri"):
-    layout = QHBoxLayout()
 
-    slider = ColorSelectSlider(min_, max_, callback)
+def simple_scroll_area(layout: QHBoxLayout | QVBoxLayout):
+    scroll = QScrollArea()
+    scroll.setContentsMargins(0, 0, 0, 0)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-    layout.addWidget(simple_label(text, size, font=font))
-    layout.addStretch(1)
-    layout.addWidget(slider)
-    return layout, slider
+    w = QWidget()
+    w.setLayout(layout)
+    scroll.setWidget(w)
 
-def icon_button(icon_path, btn_size, icon_size, color_scheme, callback=None, icon_color=None, parent=None):
+    return scroll
+
+
+def icon_button(icon_path, btn_size, icon_size, color_scheme, callback=None, icon_color=None, parent=None,
+                border_radius="10px", border_width="5px"):
     btn = QPushButton() if parent is None else QPushButton(parent)
     if btn_size: btn.setFixedSize(btn_size, btn_size)
 
@@ -230,14 +259,14 @@ def icon_button(icon_path, btn_size, icon_size, color_scheme, callback=None, ico
     btn.setStyleSheet(f"""
         QPushButton {{
             background-color: {color_norm};
-            border-radius: 10px;
-            border: 5px solid {color_border};
+            border-radius: {border_radius};
+            border: {border_width} solid {color_border};
         }}
         QPushButton::hover {{
             background-color: {color_hover};
         }}
         QPushButton::pressed {{
-            border: 5px solid {color_click};
+            border: {border_width} solid {color_click};
             background-color: {color_border};
         }}
     """)
@@ -356,42 +385,6 @@ def paint_important_border(widget: QWidget, painter, flip_x, flip_y, flip_anim,
                 half_size * 2, p2 - p1 + 1, color
             )
 
-
-def framed_ui(parent, structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
-    for j, (spoiler_name, spoiler_options) in enumerate(structure.items()):
-        widgets = []
-        have_spoiler = not spoiler_name.startswith('-')
-        if have_spoiler:
-            spoiler = SpoilerOptions(spoiler_name)
-            yield spoiler
-
-        for i, (layout_type, ui_creator) in enumerate(spoiler_options):
-            fr = QFrame()
-            style = f"""
-                background-color: {"#f4f4f4" if i % 2 else "#f9f9f9"};
-            """
-            radius = 5
-            if i == 0:
-                style += f"border-top-left-radius:    {radius}px; border-top-right-radius:    {radius}px; "
-            if i == len(spoiler_options)-1:
-                style += f"border-bottom-left-radius: {radius}px; border-bottom-right-radius: {radius}px; "
-
-            fr.setStyleSheet(style)
-            layout: QHBoxLayout = layout_type()
-            ui_creator(layout)
-            layout.addStretch(0)
-            fr.setLayout(layout)
-
-            widgets.append(fr)
-            yield fr
-
-        if have_spoiler:
-            # noinspection PyUnboundLocalVariable
-            spoiler.set_widgets(widgets, parent=parent)
-
-            if j == 0:
-                spoiler.set_shown(True)
-
 def sidebars_layout(main_layout: QBoxLayout, side_width=300, title=None):
     side_layout = QVBoxLayout()
     view_layout = QVBoxLayout()
@@ -410,7 +403,6 @@ def sidebars_layout(main_layout: QBoxLayout, side_width=300, title=None):
 
     if title: side_layout.addWidget(simple_label(title, 30))
     return side_layout, view_layout
-
 
 def sidebars_ui(side_buttons: list | QVBoxLayout, opener,
                 structure: dict[str, list[list[Type[QVBoxLayout] | Type[QVBoxLayout]] | list]]):
@@ -462,28 +454,49 @@ def set_size_prop(app: QApplication, widget: QWidget, w, h):
 class LayoutBuilder:
     def __init__(self, type_):
         self.layout: QHBoxLayout | QVBoxLayout | QGridLayout = type_()
+        self.current_alignment = None
 
-    @staticmethod
-    def prepare_default_kwargs(stretch = None, alignment = None):
+    def _prepare_default_kwargs(self, stretch = None, alignment = None):
         kwargs = {}
         if stretch   is not None: kwargs["stretch"]   = stretch
         if alignment is not None: kwargs["alignment"] = alignment
+        if self.current_alignment: kwargs.setdefault("alignment", self.current_alignment)
         return kwargs
 
+    def setCurrentAlignment(self, alignment: Qt.AlignmentFlag):
+        self.current_alignment = alignment
+        return self
+
+    def setSpacing(self, spacing):
+        self.layout.setSpacing(spacing)
+        return self
+
+    def setXStretch(self, x, stretch):
+        self.layout.setColumnStretch(x, stretch)
+        return self
+
+    def setYStretch(self, y, stretch):
+        self.layout.setRowStretch(y, stretch)
+        return self
+
+    def setContentMargin(self, left, top, right, bottom):
+        self.layout.setContentsMargins(left, top, right, bottom)
+        return self
+
     def addWidget(self, widget: QWidget, stretch = None, alignment = None):
-        self.layout.addWidget(widget, **self.prepare_default_kwargs(stretch, alignment))
+        self.layout.addWidget(widget, **self._prepare_default_kwargs(stretch, alignment))
         return self
 
     def addLayout(self, layout: QLayout, stretch = None):
-        self.layout.addLayout(layout, **self.prepare_default_kwargs(stretch))
+        self.layout.addLayout(layout, **self._prepare_default_kwargs(stretch))
         return self
 
     def addWidgetAt(self, x, y, widget: QWidget, stretch = None, alignment = None):
-        self.layout.addWidget(widget, y, x, **self.prepare_default_kwargs(stretch, alignment))
+        self.layout.addWidget(widget, y, x, **self._prepare_default_kwargs(stretch, alignment))
         return self
 
     def addLayoutAt(self, x, y, layout: QLayout, stretch = None):
-        self.layout.addLayout(layout, x, y, **self.prepare_default_kwargs(stretch))
+        self.layout.addLayout(layout, x, y, **self._prepare_default_kwargs(stretch))
         return self
 
     def addStretch(self, stretch: int):
@@ -501,6 +514,10 @@ class LayoutBuilder:
 
     def addAllWidgets(self, ws: Iterable[QWidget], **kwargs):
         for w in ws: self.addWidget(w, **kwargs)
+        return self
+
+    def addAllWidgetsAt(self, ws: Iterable[tuple[int, int, QWidget]], **kwargs):
+        for x, y, w in ws: self.addWidgetAt(x, y, w, **kwargs)
         return self
 
 
@@ -535,7 +552,7 @@ class AutoExpandingTextEdit(QTextEdit):
 
 
 class FormulaEdit(AutoExpandingTextEdit):
-    def __init__(self, task_edit: "main.TaskForm", error_display: QLabel, font="Anonymous Pro"):
+    def __init__(self, task_edit, error_display: QLabel, font="Anonymous Pro"):
         super().__init__(40)
         self.setFont(QFont(font, 30))
 
@@ -748,113 +765,6 @@ class SingleInstanceApplication(QApplication):
         """Оповещение о существующем экземпляре"""
         QMessageBox.information(None, "Приложение уже запущено",
                                 "Программа уже работает в другом окне.")
-
-
-class SpoilerOptions(QPushButton):
-    def __init__(self, name: str, widgets: list[QWidget] = None, collapsed=True):
-        super().__init__(name)
-
-        self.widgets = widgets if widgets else []
-
-        self.setContentsMargins(0, 0, 0, 0)
-        self.setFixedHeight(50)
-        self.setStyleSheet("""
-            QPushButton {
-                font-size: 20px;
-                font-style: italic;
-                color: white;
-                background-color: #111;
-                border: 1px solid #333;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }
-
-            QPushButton:hover {
-                background-color: #222;
-                color: #fff;
-            }
-
-            QPushButton:pressed {
-                background-color: #444;
-                color: #fff;
-            }
-        """)
-
-        # noinspection PyUnresolvedReferences
-        self.clicked.connect(self.on_click)
-        self.set_hidden(collapsed)
-
-    def set_widgets(self, widgets, parent=None):
-        for w in widgets:
-            if parent: w.setParent(parent)
-            p = w.parent()
-            if p is None:
-                print("Будь добр виджеты сначала в лэйаут добавить")
-                raise ValueError
-
-        self.widgets = widgets
-        self.set_shown(self.shown)
-
-    def add_widget(self, widget):
-        self.widgets.append(widget)
-        self.set_shown(self.shown)
-
-    def on_click(self):
-        self.set_hidden(self.shown)
-
-    def set_shown(self, is_shown):
-        self.shown = is_shown
-        if is_shown:
-            for widget in self.widgets: widget.show()
-        else:
-            for widget in self.widgets: widget.hide()
-
-    def set_hidden(self, is_hidden):
-        self.set_shown(not is_hidden)
-
-
-class ColorSelectSlider(QSlider):
-    def __init__(self, min_, max_, callback):
-        super().__init__(Qt.Orientation.Horizontal)
-
-        self.setMinimumWidth(450)
-        self.setMinimum(min_)
-        self.setMaximum(max_)
-        self.setValue(0)
-        self.setTickPosition(QSlider.TickPosition.TicksBothSides)
-        self.setTickInterval(30)
-        self.setSingleStep(1)
-        self.setPageStep(10)
-        self.setInvertedAppearance(False)
-        self.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #ccc;
-                background: #e0e0e0;
-                height: 8px;
-                border-radius: 4px;
-                margin: 0px 12px;
-            }
-            QSlider::handle:horizontal {
-                background: #333;  /* Нейтральный цвет для ручки */
-                border: 3px solid #111;
-                height: 10px;
-                width:  20px;
-                margin: -5px;
-                border-radius: 5px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #000; /* Цвет для заполненной части полосы */
-                margin: 2px 0px 2px 15px;
-                border-radius: 20px;
-            }
-        """)
-
-        if callback:
-            # noinspection PyUnresolvedReferences
-            self.valueChanged.connect(callback)
-
-    def wheelEvent(self, e):
-        e.ignore()
 
 
 class SlideButton(QPushButton):
@@ -1306,8 +1216,6 @@ class DateSelector(QFrame):
         self.title = simple_label("Новое условие", 20, "Times New Roman")
         self.title.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        self.needed_height = 140  # Высота заголовка
-
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.title)
         self.layout.addSpacing(20)
@@ -1336,8 +1244,6 @@ class DateSelector(QFrame):
         main_layout.addWidget(self.main_contents)
         self.setLayout(main_layout)
 
-        self.setFixedWidth(574)
-
         # noinspection PyTypeChecker
         self.multi_date_type: Type = None
         self.set_to_weekday()
@@ -1345,14 +1251,12 @@ class DateSelector(QFrame):
         self.parity = 0
         self.change_week_parity(0)
 
-        self.delete_button    = icon_button("remove.svg", 50, 70, 'red',
+        self.delete_button = icon_button("remove.svg", 50, 70, 'red',
                                          callback=self.remove, parent=self)
-
-        self.clone_button     = icon_button("add.svg", 50, 70, 'blue',
+        self.clone_button = icon_button("add.svg", 50, 70, 'blue',
                                          callback=self.clone_self, parent=self)
-
-        self.show_hide_button = icon_button("show.svg", 50, 70, 'green',
-                                        callback=self.toggle_visibility, parent=self)
+        self.show_button = icon_button("show.svg", 50, 70, 'green',
+                                       callback=self.toggle_visibility, parent=self)
         self.visibility = True
         self.toggle_visibility()
 
@@ -1365,14 +1269,12 @@ class DateSelector(QFrame):
             self.short_desc_lb.setVisible(False)
             self.main_contents.setVisible(True)
 
-            self.show_hide_button.setIcon(recolor_icon("hide.svg", QColor(240, 240, 240)))
-
-            self.setMinimumHeight(self.needed_height)
+            self.show_button.setIcon(recolor_icon("hide.svg", QColor(240, 240, 240)))
         else:
             self.short_desc_lb.setVisible(True)
             self.main_contents.setVisible(False)
 
-            self.show_hide_button.setIcon(recolor_icon("show.svg", QColor(240, 240, 240)))
+            self.show_button.setIcon(recolor_icon("show.svg", QColor(240, 240, 240)))
 
             try:
                 self.short_desc_lb.setText(self.get_multidate().to_str())
@@ -1380,7 +1282,7 @@ class DateSelector(QFrame):
                 self.short_desc_lb.setText("Неполностью заполненное условие")
             self.short_desc_lb.setFont(QFont('Calibri', 20 if len(self.short_desc_lb.text()) < 30 else 17))
 
-            self.setMinimumHeight(70)
+        self.setMinimumHeight(70)
 
         # noinspection PyUnresolvedReferences
         self.parent.update_date_options()
@@ -1436,32 +1338,16 @@ class DateSelector(QFrame):
         self.days_off_edit.setValue(days_off, do_additional_check=False)
         self.change_parity_inversion(firstly_on)
 
-    def get_parity(self):
+    def get_week_parity(self):
         if self.parity == 0: return None
         return self.parity - 1
 
     def change_week_parity(self, new_parity=None):
         self.parity = ((self.parity + 1) if new_parity is None else new_parity) % 3
+        self.week_parity_selector.set_index(self.parity, silent=True)
 
-        color_norm, color_hover, color_click, color_border = color_schemes.get(['gray', 'red', 'green'][self.parity], (0, 0, 0, 0))
-        self.parity_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {color_norm};
-                border-radius: 10px;
-                border: 5px solid {color_border};
-                color: #f0f0f0;
-            }}
-            QPushButton::hover {{
-                background-color: {color_hover};
-                color: #fff;
-            }}
-            QPushButton::pressed {{
-                border: 5px solid {color_click};
-                background-color: {color_border};
-                color: #eee;
-            }}
-        """)
-        self.parity_button.setIcon(self.parity_icons[self.parity])
+    def set_week_parity(self, parity):
+        self.change_week_parity(0 if parity is None else parity + 1)
 
     def change_parity_inversion(self, new_firstly_on=None):
         self.firstly_on = not self.firstly_on if new_firstly_on is None else new_firstly_on
@@ -1470,9 +1356,6 @@ class DateSelector(QFrame):
         self.parity_invert_btn.setIcon(recolor_icon(
             "remove.svg" if self.firstly_on else "checkmark.svg", QColor(240, 240, 240)
         ))
-
-    def set_week_parity(self, parity):
-        self.change_week_parity(0 if parity is None else parity + 1)
 
     def set_to_weekday(self):
         if self.multi_date_type == MultiDateWeekday: return
@@ -1523,6 +1406,7 @@ class DateSelector(QFrame):
             "month_constraint":  self.selected_months,
             "year_constraint":   self.selected_years,
             "periods_constraint": self.selected_periods,
+            "week_parity_constraint": self.get_week_parity(),
         }
 
         if self.multi_date_type == MultiDateWeekday:
@@ -1575,12 +1459,10 @@ class DateSelector(QFrame):
         layout.addStretch(0)
 
         self.layout.addLayout(layout)
-        self.needed_height += 60
 
     def create_ui_weekday_select(self):
         self.weekday_select_container = QWidget()
         self.weekday_select_container.setFixedHeight(150)
-        self.needed_height += 150
 
         layout = QHBoxLayout()
         for i, day in enumerate(days_of_week, start=1):
@@ -1633,7 +1515,6 @@ class DateSelector(QFrame):
     def create_ui_parityday_select(self):
         self.parityday_select_container = QWidget()
         self.parityday_select_container.setFixedHeight(150)
-        # self.needed_height += 150
         layout = QGridLayout()
 
         # noinspection PyUnresolvedReferences
@@ -1661,7 +1542,6 @@ class DateSelector(QFrame):
     def create_ui_month_select(self):
         self.month_select_container = QWidget()
         self.month_select_container.setFixedHeight(110)
-        self.needed_height += 110
 
         layout = QGridLayout()
         for i, day in enumerate(months):
@@ -1687,7 +1567,6 @@ class DateSelector(QFrame):
     def create_ui_year_select(self):
         self.year_select_container = QWidget()
         self.year_select_container.setFixedHeight(50)
-        self.needed_height += 50
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1718,28 +1597,33 @@ class DateSelector(QFrame):
     def create_ui_weekparity(self):
         layout = QHBoxLayout()
 
-        self.parity_icons = [
-            recolor_icon("dont_care.svg", QColor(240, 240, 240)),
-            recolor_icon("remove.svg",    QColor(240, 240, 240)),
-            recolor_icon("checkmark.svg", QColor(240, 240, 240))
-        ]
-        self.parity_button = QPushButton()
-        self.parity_button.setFixedSize(50, 50)
-        self.parity_button.setIconSize(QSize(70, 70))
+        self.week_parity_selector = AnyYesNoSelector(on_change=self.change_week_parity)
+        self.week_parity_picker = icon_button("pick.svg", 50, 70, 'gold')
+        self.popup_week_parity_selector = CalendarPopup(
+            self.week_parity_picker,
+            lambda date: self.week_parity_selector.set_index(MultiDateHolder.get_week_parity(date) + 1),
+            custom_style_callback=lambda day, btn: btn.set_colors([
+                QColor(255,   0,   0)
+                if MultiDateHolder.get_week_parity(day) else
+                QColor(  0, 255,   0)
+            ]),
+            disable_default_style=True
+        )
+        self.week_parity_picker.clicked.connect(self.popup_week_parity_selector.display)
+
         # noinspection PyUnresolvedReferences
-        self.parity_button.clicked.connect(lambda : self.change_week_parity())
+        # self.parity_button.clicked.connect(lambda : self.change_week_parity())
 
         lb = simple_label("Чётность недели - ", 30)
         layout.addWidget(lb)
-        layout.addWidget(self.parity_button)
+        layout.addWidget(self.week_parity_selector)
+        layout.addWidget(self.week_parity_picker)
         layout.addStretch(0)
 
         self.layout.addLayout(layout)
-        self.needed_height += self.parity_button.height()
 
     def create_ui_time_select(self):
         self.time_selector = TimeSelector(8, 24)
-        self.needed_height += self.time_selector.height()
         self.layout.addWidget(self.time_selector)
 
     def create_ui_period_select(self):
@@ -1747,7 +1631,6 @@ class DateSelector(QFrame):
 
         self.period_select_container = QWidget()
         self.period_select_container.setFixedHeight(50 * max_row)
-        self.needed_height += 50 * max_row
 
         layout = QGridLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1789,7 +1672,7 @@ class DateSelector(QFrame):
         clone.days_off_edit.setText(self.days_off_edit.text())
         clone.firstly_on = self.firstly_on
 
-        clone.change_week_parity(self.parity)
+        clone.week_parity_selector.set_index(self.parity)
 
         clone.time_selector.set_min(self.time_selector.min_value)
         clone.time_selector.set_max(self.time_selector.max_value)
@@ -1809,7 +1692,7 @@ class DateSelector(QFrame):
         start_pos      = 11
         between_offset = 10
 
-        for btn in [self.delete_button, self.clone_button, self.show_hide_button]:
+        for btn in [self.delete_button, self.clone_button, self.show_button]:
             btn.move(self.width() - start_pos - btn.width(), 10)
             start_pos += btn.width() + between_offset
 
@@ -1949,6 +1832,346 @@ class WhatsThisMarker(QPushButton):
         super().moveEvent(event)
 
 
+class AdvancedColorSelector(QFrame):
+    """Селектор цвета: колесо HUE + центральный квадрат для SAT/VAL"""
+    colorChanged = pyqtSignal(QColor)
+
+    def __init__(self, size=350, ring_thickness=40):
+        super().__init__()
+
+        self.wheel_size = size
+        self.ring_thickness = ring_thickness
+
+        self.setFixedSize(size, size)
+
+        # Пометки для других цветов
+        self.tracers: list[QColor] = []
+
+        self.hue = 0
+        self.sat = 255
+        self.val = 255
+
+        self.sat_pos = 1.0
+        self.val_pos = 1.0
+
+        # Состояние перетаскивания
+        self.dragging_wheel = False
+        self.dragging_square = False
+
+        self.setMouseTracking(True)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        self._draw_color_wheel(painter)
+        self._draw_center_satval_square(painter)
+        self._draw_satval_picker(painter)
+
+        center_x, center_y, outer_radius, inner_radius = self.get_circle_stats()
+        self._draw_hue_slider(painter, center_x, center_y, outer_radius, inner_radius)
+
+        self._draw_color_preview(painter)
+
+    def _draw_color_wheel(self, painter: QPainter):
+        """Рисует цветовое колесо HUE"""
+        center_x, center_y, outer_radius, inner_radius = self.get_circle_stats()
+
+        # Фон
+        painter.setBrush(QColor.fromHsv(self.hue, 200, 100))
+        painter.drawEllipse(QRectF(0, 0, self.wheel_size, self.wheel_size))
+
+        gradient = QConicalGradient(QPointF(center_x, center_y), 0)
+        num_stops = 60
+        for i in range(num_stops + 1):
+            hue = int((i / num_stops) * 359)
+            gradient.setColorAt(i / num_stops, QColor.fromHsv(hue, 255, 255))
+
+        path = QPainterPath()
+        outer_rect = QRectF(
+            center_x - outer_radius,
+            center_y - outer_radius,
+            outer_radius * 2,
+            outer_radius * 2
+        )
+        path.addEllipse(outer_rect)
+
+        inner_rect = QRectF(
+            center_x - inner_radius,
+            center_y - inner_radius,
+            inner_radius * 2,
+            inner_radius * 2
+        )
+        path.addEllipse(inner_rect)
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+
+        # Рисуем кольцо
+        painter.setBrush(gradient)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPath(path)
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        painter.setPen(QPen(QColor(0, 0, 0, 60), 1))
+        for tracer in self.tracers:
+            if tracer.saturation() < 100 or tracer.value() < 100: continue
+            angle = -math.radians(tracer.hue())
+            painter.drawLine(
+                QPointF(inner_radius * math.cos(angle) + center_x, inner_radius * math.sin(angle) + center_y),
+                QPointF(outer_radius * math.cos(angle) + center_x, outer_radius * math.sin(angle) + center_y)
+            )
+
+        # Обводки
+        painter.setPen(QPen(QColor(0, 0, 0), 5))
+        painter.drawEllipse(outer_rect)
+        painter.drawEllipse(inner_rect)
+
+    def _draw_hue_slider(self, painter, center_x, center_y, outer_radius, inner_radius):
+        """Рисует прямоугольный индикатор выбранного HUE на кольце"""
+        angle_rad = -math.radians(self.hue)
+
+        outer_x = center_x + outer_radius * math.cos(angle_rad)
+        outer_y = center_y + outer_radius * math.sin(angle_rad)
+        inner_x = center_x + inner_radius * math.cos(angle_rad)
+        inner_y = center_y + inner_radius * math.sin(angle_rad)
+
+        perp_angle = angle_rad + math.pi / 2
+        slider_width = 10
+        dx = slider_width / 2 * math.cos(perp_angle)
+        dy = slider_width / 2 * math.sin(perp_angle)
+
+        path = QPainterPath()
+        path.moveTo(outer_x + dx, outer_y + dy)
+        path.lineTo(outer_x - dx, outer_y - dy)
+        path.lineTo(inner_x - dx, inner_y - dy)
+        path.lineTo(inner_x + dx, inner_y + dy)
+        path.closeSubpath()
+
+        painter.setPen(QPen(QColor(255, 255, 255), 4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        painter.setPen(QPen(QColor(0, 0, 0), 2))
+        painter.drawPath(path)
+
+    def _draw_center_satval_square(self, painter):
+        """Рисует центральный квадрат с градиентом SAT (по X) и VAL (по Y)"""
+        center_x = self.wheel_size / 2
+        center_y = self.wheel_size / 2
+        outer_radius = self.wheel_size / 2 - 3
+        inner_radius = outer_radius - self.ring_thickness
+
+        # Размер квадрата (чуть меньше внутреннего круга)
+        square_size = (self.wheel_size / 2 - 40) * 2 * math.sin(math.pi / 4) + 13
+        self.get_square_size()
+
+        square_left = center_x - square_size / 2
+        square_top = center_y - square_size / 2
+
+        square_rect = QRectF(square_left, square_top, square_size, square_size)
+
+        # Сначала рисуем базовый цвет (выбранный HUE с полной насыщенностью и яркостью)
+        base_color = QColor.fromHsv(self.hue, 255, 255)
+        rounded_rect_path = QPainterPath()
+        rounded_rect_path.addRoundedRect(square_rect, 30, 30)
+        painter.fillPath(rounded_rect_path, base_color)
+
+        # Горизонтальный градиент: слева белый (SAT=0), справа прозрачный (SAT=255)
+        sat_gradient = QLinearGradient(square_left, square_top, square_left + square_size, square_top)
+        sat_gradient.setColorAt(0, QColor(255, 255, 255, 255))
+        sat_gradient.setColorAt(1, QColor(255, 255, 255, 0))
+
+        painter.fillPath(rounded_rect_path, sat_gradient)
+
+        # Вертикальный градиент: сверху прозрачный (VAL=255), снизу чёрный (VAL=0)
+        val_gradient = QLinearGradient(square_left, square_top, square_left, square_top + square_size)
+        val_gradient.setColorAt(0, QColor(0, 0, 0, 0))
+        val_gradient.setColorAt(1, QColor(0, 0, 0, 255))
+
+        painter.fillPath(rounded_rect_path, val_gradient)
+
+        # Обводка квадрата
+        bri = 0
+        painter.setPen(QPen(QColor(bri, bri, bri), 5))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(square_rect, 30, 30)
+
+    def _draw_satval_picker(self, painter):
+        """Рисует точку выбора SAT/VAL в центральном квадрате"""
+        center_x = self.wheel_size / 2
+        center_y = self.wheel_size / 2
+        outer_radius = self.wheel_size / 2 - 3
+        inner_radius = outer_radius - self.ring_thickness
+
+        square_size = self.get_square_size()
+        square_left = center_x - square_size / 2
+        square_top = center_y - square_size / 2
+
+        # Позиция точки
+        picker_x = square_left + self.sat_pos * square_size
+        picker_y = square_top + (1 - self.val_pos) * square_size  # Инвертируем Y (сверху = яркий)
+
+        picker_radius = 8
+
+        # Белая обводка
+        painter.setPen(QPen(QColor(255, 255, 255), 4))
+        painter.setBrush(self.get_color())
+        painter.drawEllipse(QPointF(picker_x, picker_y), picker_radius, picker_radius)
+
+        # Чёрная обводка
+        painter.setPen(QPen(QColor(0, 0, 0), 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(picker_x, picker_y), picker_radius, picker_radius)
+
+    def _draw_color_preview(self, painter: QPainter):
+        """Рисует превью цвета в углу"""
+        border_size = 5
+        x_size = self.width()  / 6
+        y_size = self.height() / 6
+        rect = QRectF(self.width() - x_size - border_size, self.height() - y_size - border_size, x_size, y_size)
+        painter.setBrush(self.get_color())
+        painter.setPen(QPen(QColor(0, 0, 0), border_size))
+        painter.drawRect(rect)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            x, y = event.position().x(), event.position().y()
+
+            if self._is_in_square(x, y):
+                self.dragging_square = True
+                self._update_satval_from_position(x, y)
+            elif self._is_on_wheel(x, y):
+                self.dragging_wheel = True
+                self._update_hue_from_position(x, y)
+
+    def mouseMoveEvent(self, event):
+        x, y = event.position().x(), event.position().y()
+
+        if self.dragging_square or self._is_in_square(x, y):
+            if self.dragging_square:
+                square_size, square_left, square_top = self.get_square_stats()
+
+                # Ограничиваем позицию курсора пределами квадрата
+                if not (square_left <= x <= square_left + square_size) or\
+                   not (square_top  <= y <= square_top  + square_size):
+                    clamped_x = max(square_left, min(x, square_left + square_size))
+                    clamped_y = max(square_top, min(y, square_top + square_size))
+                    self.cursor().setPos(self.mapToGlobal(QPointF(clamped_x, clamped_y).toPoint()))
+
+                self.setCursor(Qt.CursorShape.BlankCursor)
+            else:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        if self.dragging_wheel:
+            self._update_hue_from_position(x, y)
+        elif self.dragging_square:
+            self._update_satval_from_position(x, y)
+
+    def mouseReleaseEvent(self, event):
+        x, y = event.position().x(), event.position().y()
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.dragging_square and self._is_in_square(x, y):
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
+            self.dragging_wheel = False
+            self.dragging_square = False
+
+    def get_square_size(self):
+        return (self.wheel_size / 2 - 40) * 2 * math.sin(math.pi / 4) - 5
+
+    def get_circle_stats(self):
+        # center_x, center_y, outer_radius, inner_radius = self.get_circle_stats()
+        outer_radius = self.wheel_size / 2 - 3
+        return (
+            self.wheel_size / 2,
+            self.wheel_size / 2,
+            outer_radius,
+            outer_radius - self.ring_thickness
+        )
+
+    def get_square_stats(self, size_delta=0):
+        # square_size, square_left, square_top = self.get_square_stats()
+        size = (self.wheel_size / 2 - 40) * 2 * math.sin(math.pi / 4) - 5 + size_delta
+        return (
+            size,
+            (self.wheel_size - size) / 2,
+            (self.wheel_size - size) / 2
+        )
+
+    def _is_on_wheel(self, x, y):
+        """Для выбора тона цвета"""
+        center_x, center_y, outer_radius, inner_radius = self.get_circle_stats()
+        square_size, square_left, square_top = self.get_square_stats()
+        distance_to_slider_sq = (x - (square_left + square_size * self.sat_pos)) ** 2 +\
+                                (y - (square_top + square_size * (1 - self.val_pos))) ** 2
+        if distance_to_slider_sq < 10 * 10: return False
+        distance_sq = (x - center_x) ** 2 + (y - center_y) ** 2
+        return inner_radius * inner_radius <= distance_sq <= outer_radius * outer_radius
+
+    def _is_in_square(self, x, y):
+        """Для выбора насыщенности и яркости"""
+        square_size, square_left, square_top = self.get_square_stats(10)
+        return (square_left <= x <= square_left + square_size and
+                square_top <= y <= square_top + square_size)
+
+    def _update_hue_from_position(self, x, y):
+        """Обновляет HUE на основе позиции мыши"""
+        center_x = self.wheel_size / 2
+        center_y = self.wheel_size / 2
+
+        dx = x - center_x
+        dy = y - center_y
+        angle_rad = math.atan2(dy, dx)
+        angle_deg = math.degrees(angle_rad)
+
+        self.hue = int(-angle_deg % 360)
+
+        self.update()
+        self.colorChanged.emit(self.get_color())
+
+    def _update_satval_from_position(self, x, y):
+        """Обновляет SAT/VAL на основе позиции мыши в центральном квадрате"""
+        square_size, square_left, square_top = self.get_square_stats()
+
+        # Вычисляем относительную позицию в квадрате (0-1)
+        rel_x = (x - square_left) / square_size
+        rel_y = (y - square_top) / square_size
+
+        # Ограничиваем значения
+        rel_x = max(0, min(1, rel_x))
+        rel_y = max(0, min(1, rel_y))
+
+        # Сохраняем позицию
+        self.sat_pos = rel_x
+        self.val_pos = 1 - rel_y  # Инвертируем Y
+
+        self.sat = int(self.sat_pos * 255)
+        self.val = int(self.val_pos * 255)
+
+        self.update()
+        self.colorChanged.emit(self.get_color())
+
+    def get_color(self):
+        return QColor.fromHsv(self.hue, self.sat, self.val)
+
+    def set_color(self, color: QColor):
+        if color == QColor.fromHsv(self.hue, self.sat, self.val): return
+        self.hue = color.hue() if color.hue() != -1 else 0
+        self.sat = color.saturation()
+        self.val = color.value()
+
+        self.sat_pos = self.sat / 255
+        self.val_pos = self.val / 255
+
+        self.update()
+        self.colorChanged.emit(self.get_color())
+
+
 class TimePeriodSelector(QFrame):
     def __init__(self, main_window, remove_function):
         super().__init__()
@@ -2033,17 +2256,19 @@ class DaySelector(QFrame):
 
 class CalendarPopup(QFrame):
     def __init__(self, parent, obj_to_edit: QWidget | Callable, pick_date: datetime | date = None,
-                 main_window=None, custom_style_callback: Callable[[date, "SegmentedButton"], None]=None):
+                 main_window=None, custom_style_callback: Callable[[date, "SegmentedButton"], Any]=None,
+                 disable_default_style=False):
         super().__init__(parent)
         if pick_date is None: pick_date = datetime.today()
         self.pick_date = date(pick_date.year, pick_date.month, 1)
         self.original_pick_date = pick_date.date() if isinstance(pick_date, datetime) else pick_date
 
-        assert is_main_window(main_window), 'Должен быть класс главного окна'
+        assert disable_default_style or is_main_window(main_window), 'Должен быть класс главного окна'
         self.main_window = main_window
 
         self.obj_to_edit = obj_to_edit
         self.custom_style_callback = custom_style_callback
+        self.disable_default_style = disable_default_style
 
         self.setWindowFlags(Qt.WindowType.Popup)
         self.setObjectName("calendarFrame")
@@ -2102,6 +2327,11 @@ class CalendarPopup(QFrame):
 
         self.day_buttons = []
         # self.update_view()
+
+    def display(self, anchor: QWidget = None):
+        self.update_position(anchor or self.parent())
+        self.update_view()
+        self.show()
 
     def update_position(self, anchor_widget: QWidget):
         btn_global_pos = anchor_widget.mapToGlobal(QPoint(0, anchor_widget.height()))
@@ -2193,18 +2423,19 @@ class CalendarPopup(QFrame):
             # noinspection PyTypeChecker
             btns.append(defaultdict(list, [("btn", btn)]))
 
-        events: list[ScheduleEvent] = [e for e in self.main_window.scheduled_events if not e.tags.have(Tags.HIDDEN.YES)]
+        if not self.disable_default_style:
+            events: list[ScheduleEvent] = [e for e in self.main_window.scheduled_events if not e.tags.have(Tags.HIDDEN.YES)]
 
-        for event in events:
-            for stamp in event.get_final_timestamps(from_day, to_day):
-                index = (stamp.get_date() - from_day).days
-                btns[index]["colors"].append(QColor(*event.color))
-                btns[index]["tooltips"].append(event.name)
+            for event in events:
+                for stamp in event.get_final_timestamps(from_day, to_day):
+                    index = (stamp.get_date() - from_day).days
+                    btns[index]["colors"].append(QColor(*event.color))
+                    btns[index]["tooltips"].append(event.name)
 
-        for entry in btns:
-            if "tooltips" in entry:
-                entry["btn"].setToolTip("\n".join(entry["tooltips"]))
-            entry["btn"].set_colors(entry["colors"])
+            for entry in btns:
+                if "tooltips" in entry:
+                    entry["btn"].setToolTip("\n".join(entry["tooltips"]))
+                entry["btn"].set_colors(entry["colors"])
 
     def on_date_selected(self, day):
         if isinstance(self.obj_to_edit, QWidget):
@@ -2485,81 +2716,732 @@ class EventSelector(QFrame):
 
         self.setHidden(True)
         self.setObjectName("mainFrame")
+        self.setFixedSize(400, 470)
         self.setStyleSheet("""
-        #mainFrame {
-            background-color: #EDEDE1;
-            border-radius: 10px;
-            border: 5px solid #555;
-            color: #000;
-        }
+            #mainFrame {
+                border-radius: 10px;
+                border: 5px solid #555;
+            }
+            QWidget {
+                background-color: #DDDDDD;
+                color: #000;
+            }
         """)
 
-        events_content = QWidget()
-        events_content.setMinimumWidth(0)
+        self.scroll_area = ReorderableScrollArea()
 
-        self.events_layout = QVBoxLayout(events_content)
-        self.events_layout.setContentsMargins(0, 0, 0, 0)
+        def adv_options(on_change):
+            combo_importance = AnyYesNoSelector(on_change=on_change)
+            combo_hidden     = AnyYesNoSelector(on_change=on_change, index=2)
+            combo_expired    = AnyYesNoSelector(on_change=on_change)
 
-        self.events_scroll = QScrollArea()
-        self.events_scroll.setWidgetResizable(True)
-        self.events_scroll.setWidget(events_content)
-        self.events_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.events_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.events_scroll.setStyleSheet('background-color: transparent;')
-        self.events_scroll.setFixedHeight(420)
+            combo_count_type = simple_combo_box(
+                (
+                    (recolor_icon("clean/any.svg", QColor(100, 100, 100)), "Любое"),
+                    (recolor_icon("clean/alarm.svg", QColor(0, 0, 0)), "Бесконечное"),
+                    (recolor_icon("clean/stop.svg", QColor(0, 0, 0)), "Ограниченное"),
+                ),
+                20,
+                icon_size=30,
+                on_change=on_change,
+            )
 
-        self.main_layout = QVBoxLayout()
-        self.main_layout.addWidget(self.events_scroll)
-        self.main_layout.addWidget(icon_button(
-            "remove.svg", 50, 70, 'red',
-            callback=lambda: self.setHidden(True)
-        ))
-        self.main_layout.addStretch(1)
+            def options_filter(w: EventButton, _, __, score):
+                if combo_count_type.currentText() != "Любое":
+                    date = w.event.multi_date
+                    is_limited = False
+                    if w.event.times != 0:
+                        is_limited = True
+                    else:
+                        for subdate in (date.holders if isinstance(date, MultiDateMixer) else [date]):
+                            if not (subdate.month_constraint and subdate.year_constraint):
+                                break
+                        else:
+                            is_limited = True
 
-        self.setLayout(self.main_layout)
-        self.setFixedSize(300, 500)
+                    if combo_count_type.currentText() != ["Бесконечное", "Ограниченное"][is_limited]:
+                        return None
+
+                for combo, ok_tag in (
+                    (combo_importance, Tags.IMPORTANT.YES),
+                    (combo_hidden,     Tags.HIDDEN.YES),
+                ):
+                    if combo.get_value() is None:
+                        continue
+                    if combo.get_name() != ["Нет", "Да"][ok_tag in w.event.tags]:
+                        return None
+
+                if combo_expired.get_value() is not None:
+                    if combo_expired.get_name() != ["Нет", "Да"][w.event.get_next_timestamp(datetime.now().date()) is None]:
+                        return None
+
+                return score
+
+            return options_filter, (
+                LayoutBuilder(QVBoxLayout)
+                .addLayout(
+                    LayoutBuilder(QGridLayout)
+                    .setCurrentAlignment(Qt.AlignmentFlag.AlignRight)
+                    .addWidgetAt(0, 0, simple_label("Важное событие:", 20))
+                    .addWidgetAt(0, 1, simple_label("Скрытое событие:", 20))
+                    .addWidgetAt(0, 2, simple_label("Истёкшее событие:", 20))
+                    .addWidgetAt(1, 0, combo_importance)
+                    .addWidgetAt(1, 1, combo_hidden)
+                    .addWidgetAt(1, 2, combo_expired)
+                    .build()
+                )
+                .addWidget(new_separator(h=2))
+                .addWidget(simple_label("Количество выполнений:", 20))
+                .addWidget(combo_count_type, alignment=Qt.AlignmentFlag.AlignCenter)
+                .build()
+            )
+
+        self.search_bar = SearchBarWidget(
+            self.scroll_area,
+            allowed_chars="-_:+=",
+            advanced_options=adv_options
+        )
+
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.addWidget(self.search_bar)
+        self.main_layout.addWidget(self.scroll_area)
 
     def set_events(self, events: list[ScheduleEvent]):
-        for i in range(self.events_layout.count()):
-            w = self.events_layout.itemAt(i).widget()
-            if w is None: continue
-            w.deleteLater()
+        self.search_bar.elements_data.clear()
+        self.scroll_area.clear()
 
         # noinspection PyUnresolvedReferences
         def on_click_edit(button: EventButton):
+            print("CLICKED", button.event, button.lb_title.text())
             self.app.create_task_add_form(button.event)
             self.setHidden(True)
 
-        all_sorted = sorted(((e, e.get_next_timestamp(datetime.now().date())) for e in events),
-                            key=lambda x: x[0].get_sort_value() if x[1] is None else x[1].get_start_datetime().timestamp())
+        btns = [
+            EventButton(event, callback=on_click_edit)
+            for event in events
+        ]
+        self.search_bar.add_search_elements(
+            btns,
+            lambda b: (b.event.name, None, b.event)
+        )
+        self.search_bar.apply_filters()
 
-        for i, (name, is_hidden, is_expired) in enumerate([
-            ["Основные", False, False],
-            ["Истёкшие", False, True ],
-            ["Скрытые",  True,  None ]
-        ]):
-            widgets = []
-            for event, date in all_sorted:
-                if is_hidden  is not None  and  is_hidden  ^ (Tags.HIDDEN.YES in event.tags): continue
-                if is_expired is not None  and  is_expired ^ (date is None): continue
+        self.show()
 
-                btn = EventButton(event, callback=on_click_edit)
-                widgets.append(btn)
 
-            if not widgets: continue
+class AnyYesNoSelector(QFrame):
+    onIndexChange = pyqtSignal(int)
 
-            spoiler = SpoilerOptions(name, collapsed= i != 0)
-            self.events_layout.addWidget(spoiler)
+    def __init__(self, parent=None, index=0, on_change: Callable[[int], Any] | None = None):
+        super().__init__(parent)
+        self._btn_any = icon_button("dont_care.svg", 40, 50, "", callback=lambda : self.set_index(0))
+        self._btn_yes = icon_button("checkmark.svg", 40, 50, "", callback=lambda : self.set_index(1))
+        self._btn_no  = icon_button("remove.svg",    40, 50, "", callback=lambda : self.set_index(2))
+        self.set_index(index, silent=True)
+        if on_change: self.onIndexChange.connect(on_change)
 
-            for widget in widgets: self.events_layout.addWidget(widget)
+        self.setLayout(
+            LayoutBuilder(QHBoxLayout)
+            .setSpacing(0)
+            .setContentMargin(0, 0, 0, 0)
+            .addWidget(self._btn_any)
+            .addWidget(self._btn_yes)
+            .addWidget(self._btn_no)
+            .build()
+        )
 
-            spoiler.set_widgets(widgets)
-            self.events_layout.addWidget(new_separator(h=3))
+    def set_index(self, new_index, silent=False):
+        self._index = new_index % 3
+        self.update_styles()
+        if not silent: self.onIndexChange.emit(self._index)
 
-        self.events_layout.addStretch(0)
+    def get_value(self):
+        return [None, True, False][self._index]
 
-        self.events_scroll.verticalScrollBar().setValue(0)
-        self.setVisible(True)
+    def get_name(self, any_name="Любой", yes_name="Да", no_name="Нет"):
+        return [any_name, yes_name, no_name][self._index]
+
+    def update_styles(self):
+        self._update_style_single(self._btn_any,
+                                  "border-top-left-radius: 10px;"
+                                  "border-bottom-left-radius: 10px;"
+                                  "border-right: none;",
+                                  "gray" if self._index == 0 else "slate")
+        self._update_style_single(self._btn_yes,
+                                  "border-left: none;"
+                                  "border-right: none;",
+                                  "green" if self._index == 1 else "slate")
+        self._update_style_single(self._btn_no ,
+                                  "border-top-right-radius: 10px;"
+                                  "border-bottom-right-radius: 10px;"
+                                  "border-left: none;",
+                                  "red" if self._index == 2 else "slate")
+
+
+    def _update_style_single(self, element, css_main, color):
+        color_norm, color_hover, color_click, color_border = color_schemes.get(color, (0, 0, 0, 0))
+        element.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {color_norm};
+                border: 5px solid {color_border};
+                {css_main}
+            }}
+            QPushButton::hover {{
+                background-color: {color_hover};
+            }}
+            QPushButton::pressed {{
+                background-color: {color_border};
+                border: 5px solid {color_click};
+                {css_main}
+            }}
+        """)
+
+
+class AdvancedOptionsPopup(QFrame):
+    """Всплывающее окно с дополнительными опциями поиска"""
+
+    def __init__(self, layout, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.set_elements_layout(layout)
+
+    def set_elements_layout(self, layout):
+        self.layout: QLayout = layout
+
+        self.container = QWidget()
+        self.container.setObjectName("popupContainer")
+        self.container.setStyleSheet("""
+            #popupContainer {
+                border-radius: 10px;
+                border: 5px solid #555;
+                padding: 15px;
+            }
+        """)
+
+        self.container.setLayout(self.layout)
+        self.setLayout(LayoutBuilder(QVBoxLayout).addWidget(self.container).build())
+
+    def show_at_position(self, pos: QPoint):
+        self.move(pos)
+        self.show()
+        self.raise_()
+
+
+class ReorderableScrollArea(QScrollArea):
+    def __init__(self):
+        super().__init__()
+        self.container = QWidget()
+        self.layout = QVBoxLayout(self.container)
+        self.layout.setSpacing(5)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.setWidget(self.container)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._widgets = []
+        self._order = []
+
+    def addWidgetSilent(self, widget):
+        self._widgets.append(widget)
+        self._order.append(len(self._widgets) - 1)
+        self.layout.addWidget(widget)
+
+    def addWidget(self, widget):
+        self.addWidgetSilent(widget)
+        self._update_container()
+
+    def insertWidget(self, index, widget):
+        self._widgets.insert(index, widget)
+        self._order.insert(index, index)
+
+        for i in range(len(self._order)):
+            if self._order[i] >= index and i != index:
+                self._order[i] += 1
+
+        self._reapply_layout()
+
+    def removeWidget(self, widget):
+        if widget in self._widgets:
+            idx = self._widgets.index(widget)
+            self._widgets.remove(widget)
+
+            order_idx = self._order.index(idx)
+            self._order.pop(order_idx)
+
+            for i in range(len(self._order)):
+                if self._order[i] > idx:
+                    self._order[i] -= 1
+
+            widget.setParent(None)
+            self._reapply_layout()
+
+    def reorder(self, new_order):
+        if len(new_order) != len(self._widgets):
+            return False
+
+        if sorted(new_order) != list(range(len(self._widgets))):
+            return False
+
+        self._order = new_order.copy()
+        self._reapply_layout()
+        return True
+
+    def _reapply_layout(self):
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+
+        for idx in self._order:
+            widget = self._widgets[idx]
+            self.layout.addWidget(widget)
+
+        self._update_container()
+
+    def _update_container(self):
+        self.container.adjustSize()
+        self.container.updateGeometry()
+        QTimer.singleShot(10, self._force_update)
+
+    def _force_update(self):
+        self.updateGeometry()
+        self.viewport().update()
+
+    def widgets(self):
+        return self._widgets.copy()
+
+    def clear(self):
+        for widget in self._widgets:
+            widget.deleteLater()
+        self._widgets.clear()
+        self._order.clear()
+        self._update_container()
+
+
+class SearchLineEdit(QLineEdit):
+    """Компонент строки поиска"""
+
+    filterChanged = pyqtSignal()
+
+    def __init__(self, parent: "SearchBarWidget"):
+        super().__init__()
+        self.font_anonymous = load_font("AnonymousPro.ttf")
+        self.font_evo_sans = load_font("EvoSans.otf")
+
+        font = QFont(self.font_anonymous, 30)
+        self.setFont(font)
+
+        self.found_matches = 0
+        self.search_bar = parent
+
+        self.textChanged.connect(self.filterChanged)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(QFont(self.font_evo_sans, 20))
+
+        w = self.width()
+        h = self.height()
+
+        color = QColor(0, 0, 0, 100) if self.found_matches > 0 else QColor(255, 0, 0, 150)
+        text = f"{self.found_matches}/{len(self.search_bar.elements_data)}"
+
+        if self.text() and not self.search_bar.clean_string(self.text()) and "-" not in self.text():
+            color = QColor(255, 0, 0, 150)
+            text = "???"
+
+        painter.setPen(color)
+        text_rect = QRectF(w / 2, 0, w / 2, h)
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
+            text
+        )
+
+    def update_match_count(self, count: int):
+        """Обновляет счетчик найденных элементов"""
+        self.found_matches = count
+        self.update()
+
+
+class SearchBarWidget(QWidget):
+    filterChanged = pyqtSignal()
+
+    def __init__(self, scroll_container=None, allowed_chars: str = "-_+=",
+                 advanced_options: Callable[
+                     [Callable],
+                     tuple[
+                         Callable[[Any, str, str, float], float | int | None],
+                         QLayout
+                     ]
+                 ] = None):
+        """
+        :param advanced_options:
+            Необязательная фабрика расширенных опций поиска.
+
+            Callable вида:
+                advanced_options(on_change) -> (filter_fn, layout)
+
+            где filter_fn(widget, query, cleaned_name, score)
+            возвращает новое значение score или None,
+            а layout — QLayout для всплывающего окна опций.
+        """
+        super().__init__()
+        self.scroll_container = scroll_container
+        self.options_filter, self.options_layout = (None, None) if advanced_options is None else advanced_options(self._on_filter_change)
+        self.options_fabric = advanced_options
+
+        self.font_anonymous = load_font("AnonymousPro.ttf")
+        self.font_evo_sans = load_font("EvoSans.otf")
+
+        self.elements_data = []  # [(widget, name, keywords, cleaned_name, cleaned_keywords, event_obj), ...]
+        self.found_matches = 0
+        self.allowed_chars = allowed_chars
+
+        self._setup_ui()
+        self.apply_filters()
+
+    def hideEvent(self, a0):
+        super().hideEvent(a0)
+        self.options_button.setChecked(False)
+        self.advanced_popup.hide()
+
+    def focusOutEvent(self, a0):
+        super().focusOutEvent(a0)
+        self.options_button.setChecked(False)
+        self.advanced_popup.hide()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Верхняя строка: поле поиска + кнопка опций
+        top_row = QWidget()
+        top_row_layout = QHBoxLayout(top_row)
+        top_row_layout.setContentsMargins(0, 0, 0, 0)
+        top_row_layout.setSpacing(5)
+
+        # Кнопка сброса и нового поиска
+        self.btn_reset_search = icon_button(
+            "remove.svg", 40, 50, 'red',
+            callback=self._reset_search
+        )
+        top_row_layout.addWidget(self.btn_reset_search)
+
+        # Поле ввода поиска
+        self.search_input = SearchLineEdit(self)
+        self.search_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.search_input.filterChanged.connect(self._on_filter_change)
+        top_row_layout.addWidget(self.search_input)
+
+        # Кнопка дополнительных опций
+        if self.options_layout:
+            self.options_button = icon_button(
+                "gear.svg", 40, 50, 'white', icon_color=(0, 0, 0),
+                callback=self._show_advanced_options
+            )
+            self.options_button.setCheckable(True)
+
+            top_row_layout.addWidget(self.options_button)
+
+            # Всплывающее окно дополнительных опций
+            self.advanced_popup = AdvancedOptionsPopup(self.options_layout, self)
+            self.advanced_popup.hide()
+
+            # Таймер для проверки кликов вне окна
+            self.click_outside_timer = QTimer(self)
+            self.click_outside_timer.timeout.connect(self._check_click_outside)
+            self.click_outside_timer.start(100)
+
+        main_layout.addWidget(top_row)
+
+    def _reset_search(self):
+        """Показывает всплывающее окно с дополнительными опциями"""
+        if self.options_fabric:
+            self.advanced_popup.deleteLater()
+            self.options_filter, layout = self.options_fabric(self._on_filter_change)
+            self.advanced_popup = AdvancedOptionsPopup(layout, self)
+            self._show_advanced_options()
+            self._on_filter_change()
+
+        self.search_input.setText("")
+        self.search_input.setFocus()
+
+    def _show_advanced_options(self):
+        """Показывает всплывающее окно с дополнительными опциями"""
+        if self.options_button.isChecked():
+            # Позиционируем окно рядом с кнопкой
+            btn_global_pos = self.options_button.mapToGlobal(QPoint(0, 0))
+            popup_x = btn_global_pos.x() + self.options_button.width() + 5
+            popup_y = btn_global_pos.y()
+
+            self.advanced_popup.show_at_position(QPoint(popup_x, popup_y))
+        else:
+            self.advanced_popup.hide()
+
+    def _check_click_outside(self):
+        """Проверяет, был ли клик вне всплывающего окна"""
+        if self.advanced_popup.isVisible() and not self.options_button.isChecked():
+            self.advanced_popup.hide()
+
+    def _on_filter_change(self):
+        """Обработчик изменения любых фильтров"""
+        self.apply_filters()
+
+    @staticmethod
+    def get_key_coords(char: str) -> tuple[int, int] | tuple[None, None]:
+        target = char.lower()
+
+        if ord("а") <= ord(target) <= ord("я"):
+            keyboard_layout = [
+                "йцукенгшщзхъ",
+                "фывапролджэ",
+                "ячсмитьбю"
+            ]
+        elif ord("a") <= ord(target) <= ord("z"):
+            keyboard_layout = [
+                "qwertyuiop",
+                "asdfghjkl",
+                "zxcvbnm"
+            ]
+        else:
+            return None, None
+
+        for y, keyboard_line in enumerate(keyboard_layout):
+            x = keyboard_line.find(target)
+            if x != -1:
+                return x, y
+        return None, None
+
+    @staticmethod
+    def is_key_close(char1: str, char2: str) -> bool:
+        x1, y1 = SearchBarWidget.get_key_coords(char1)
+        x2, y2 = SearchBarWidget.get_key_coords(char2)
+        if x1 is None or x2 is None:
+            return False
+
+        if y1 == y2 and abs(x1 - x2) <= 1:
+            return True
+        if abs(y1 - y2) <= 1 and x1 == x2:
+            return True
+        return False
+
+    @staticmethod
+    def keyboard_distance(str1: str, str2: str,
+                          cost_insert: float = 1.0,
+                          cost_delete: float = 1.0,
+                          cost_replace: int = 2,
+                          cost_nearby: int = 2,
+                          cost_transpose: float = 0.5) -> float:
+        str1 = str1.lower()
+        str2 = str2.lower()
+
+        if len(str1) > len(str2):
+            str1, str2 = str2, str1
+
+        n, m = len(str1), len(str2)
+        dp = [[0.0] * (n + 1) for _ in range(m + 1)]
+
+        for i in range(1, m + 1):
+            dp[i][0] = dp[i - 1][0] + cost_delete
+        for j in range(1, n + 1):
+            dp[0][j] = dp[0][j - 1] + cost_insert
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if str2[i - 1] == str1[j - 1]:
+                    replace_cost = 0.0
+                elif SearchBarWidget.is_key_close(str2[i - 1], str1[j - 1]):
+                    replace_cost = cost_nearby
+                else:
+                    replace_cost = cost_replace
+
+                dp[i][j] = min(
+                    dp[i - 1][j] + cost_delete,
+                    dp[i][j - 1] + cost_insert,
+                    dp[i - 1][j - 1] + replace_cost
+                )
+
+                if i > 1 and j > 1 and str2[i - 1] == str1[j - 2] and str2[i - 2] == str1[j - 1]:
+                    dp[i][j] = min(dp[i][j], dp[i - 2][j - 2] + cost_transpose)
+
+        return dp[m][n]
+
+    def clean_string(self, text: str) -> str:
+        pattern = f"[^a-zA-Zа-яА-Я0-9\\s{re.escape(self.allowed_chars)}]"
+        return re.sub(pattern, "", text).lower()
+
+    @staticmethod
+    def translate_layout(text: str) -> str:
+        layout_mapping = {
+            'q': 'й', 'w': 'ц', 'e': 'у', 'r': 'к', 't': 'е', 'y': 'н',
+            'u': 'г', 'i': 'ш', 'o': 'щ', 'p': 'з', '[': 'х', ']': 'ъ',
+            'a': 'ф', 's': 'ы', 'd': 'в', 'f': 'а', 'g': 'п', 'h': 'р',
+            'j': 'о', 'k': 'л', 'l': 'д', ';': 'ж', "'": 'э',
+            'z': 'я', 'x': 'ч', 'c': 'с', 'v': 'м', 'b': 'и', 'n': 'т',
+            'm': 'ь', ',': 'б', '.': 'ю',
+
+            'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y',
+            'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
+            'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h',
+            'о': 'j', 'л': 'k', 'д': 'l', 'ж': ';', 'э': "'",
+            'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n',
+            'ь': 'm', 'б': ',', 'ю': '.'
+        }
+
+        result = []
+        for char in text:
+            if char.lower() in layout_mapping:
+                mapped = layout_mapping[char.lower()]
+                result.append(mapped.upper() if char.isupper() else mapped)
+            else:
+                result.append(char)
+
+        return ''.join(result)
+
+    @staticmethod
+    def calculate_similarity(query: str, target: str) -> float:
+        query = query.lower()
+        target = target.lower()
+
+        if target.startswith(query):
+            prefix_bonus = -100
+        elif target.replace(" ", "").startswith(query.replace(" ", "")):
+            prefix_bonus = -80
+        else:
+            prefix_bonus = 0
+
+        base_distance = SearchBarWidget.keyboard_distance(query, target)
+
+        if prefix_bonus == 0 and len(query) >= 3:
+            min_len = min(len(query), len(target))
+            for i in range(3, min_len + 1):
+                if target[:i] == query[:i]:
+                    prefix_bonus = -i * 10
+                    break
+
+        return base_distance + prefix_bonus
+
+    @staticmethod
+    def calculate_similarity_with_layouts(query: str, target: str) -> float:
+        original_query = query.lower()
+        translated_query = SearchBarWidget.translate_layout(original_query)
+
+        target_lower = target.lower()
+
+        original_similarity = SearchBarWidget.calculate_similarity(original_query, target_lower)
+        translated_similarity = SearchBarWidget.calculate_similarity(translated_query, target_lower)
+
+        return min(original_similarity, translated_similarity)
+
+    def apply_filters(self):
+        """Применяет все активные фильтры (текст + дополнительные опции)"""
+        if not self.scroll_container:
+            return
+
+        text_query = self.search_input.text()
+        cleaned_query = self.clean_string(text_query)
+
+
+        visible_indices = []
+        self.found_matches = 0
+
+        for idx, (widget, _, keywords, cleaned_name, cleaned_keywords, event) in enumerate(self.elements_data):
+            # Вычисляем релевантность по тексту (если есть запрос)
+            if cleaned_query:
+                if cleaned_name:
+                    name_words = cleaned_name.strip(" ").split(" ")
+                    name_distance = min(SearchBarWidget.calculate_similarity_with_layouts(
+                        cleaned_query, name_word
+                    ) for name_word in name_words)
+
+                    if cleaned_query == cleaned_name:
+                        name_distance = -10000
+                else:
+                    name_distance = 10000
+
+                # Если вместо запроса вписать прочерк, то покажет элементы без имени или с именем из запрещённых символов
+                if text_query.count("-") == len(text_query):
+                    name_distance = -10000 if not cleaned_name else 10000
+
+                keyword_similarities = []
+                if cleaned_keywords:
+                    for kw in cleaned_keywords:
+                        keyword_similarities.append(
+                            SearchBarWidget.calculate_similarity_with_layouts(
+                                cleaned_query, kw
+                            )
+                        )
+
+                min_distance = min([name_distance] + keyword_similarities)
+            else:
+                min_distance = idx - 10000  # Чтобы не отфильтровали
+
+            if self.options_filter:
+                min_distance = self.options_filter(widget, cleaned_query, cleaned_name, min_distance)
+
+            if (min_distance is not None) and (min_distance <= len(cleaned_query) * 2):
+                widget.show()
+                self.found_matches += 1
+                visible_indices.append((idx, min_distance))
+            else:
+                widget.hide()
+
+        if visible_indices:
+            # Сортируем по релевантности (меньше = лучше)
+            visible_indices.sort(key=lambda x: x[1])
+            self._reorder_by_visibility(visible_indices)
+        else:
+            # noinspection PyProtectedMember
+            self.scroll_container._update_container()
+
+        self.search_input.update_match_count(self.found_matches)
+        self.filterChanged.emit()
+
+    def _restore_order(self):
+        """Восстанавливает исходный порядок элементов"""
+        order = list(range(len(self.elements_data)))
+        if self.scroll_container:
+            self.scroll_container.reorder(order)
+
+    def _reorder_by_visibility(self, visible_indices_with_similarity):
+        """Переупорядочивает элементы по релевантности"""
+        visible_indices = [idx for idx, _ in visible_indices_with_similarity]
+
+        all_indices = list(range(len(self.elements_data)))
+        new_order = visible_indices + [idx for idx in all_indices if idx not in visible_indices]
+
+        if self.scroll_container:
+            self.scroll_container.reorder(new_order)
+
+    def add_search_element(self, widget, name, keywords=None, event=None, silent=False):
+        """Добавляет элемент с предварительной очисткой строк"""
+        cleaned_name = self.clean_string(name)
+        cleaned_keywords = [self.clean_string(kw)
+                            for kw in keywords] if keywords else []
+
+
+        self.elements_data.append((widget, name, keywords or [], cleaned_name, cleaned_keywords, event))
+
+
+        if self.scroll_container:
+            if silent:
+                self.scroll_container.addWidgetSilent(widget)
+            else:
+                self.scroll_container.addWidget(widget)
+
+    def add_search_elements(self, widgets, func):
+        for widget in widgets:
+            self.add_search_element(widget, *func(widget), silent=True)
 
 
 class UpcomingEvents(QFrame):
@@ -2671,13 +3553,17 @@ class UpcomingEvents(QFrame):
 
         # noinspection PyUnresolvedReferences
         now: datetime = self.app.get_now()
+        next_stamps = {
+            event: event.get_next_timestamp(now.date())
+            for event in events
+        }
+
         def tracking(event: ScheduleEvent):
             if event.tags.have(Tags.TRACKING.NO): return False
-            if (Tags.TRACKING not in event.tags) and (not event.tags.have(Tags.IMPORTANT.YES)): return False
+            if (Tags.TRACKING.YES not in event.tags) and (not event.tags.have(Tags.IMPORTANT.YES)): return False
 
-            next_stamp = event.get_next_timestamp(now.date())
-            if next_stamp is None: return False
-            start_date, end_date = next_stamp.as_datetimes()
+            if next_stamps[event] is None: return False
+            start_date, end_date = next_stamps[event].as_datetimes()
             if now > end_date: return False
 
             if event.tags.have(Tags.IMPORTANT.YES): return True
@@ -2688,31 +3574,9 @@ class UpcomingEvents(QFrame):
 
             return False
 
-        # TODO: почему-то если поставить огромную конечную дату, то оно дико виснет
-        # TODO: и ещё если убрать все события без ограничения по времени то код супер быстро отрабатывает
-        # events = [event for event in events if event.times != 0]
-
-        with DebugTimer("Вычисление дат (+месяц)"):
-            st = time()
-            next_dates2 = {
-                event: next(event.get_final_timestamps(now.date(), now.date() + timedelta(days=31)), None)
-                for event in events
-            }
-            print("2", time() - st)
-
-        # with DebugTimer("Вычисление дат (9999 год)"):
-        #     st = time()
-        #     next_dates = {
-        #         event: next(event.get_final_timestamps(now.date(), date(9998, 1, 1)), None)
-        #         for event in events
-        #     }
-        #     print("1", time() - st)
-        return
-
-        # event.get_next_timestamp(now.date()).get_start_datetime()
         sorted_events = sorted(
-            ((event, None) for event in events if tracking(event)),
-            key=lambda x: x[1])
+            ((event, next_stamps[event]) for event in events if tracking(event)),
+            key=lambda x: x[1].get_start_datetime().timestamp())
 
         if not sorted_events:
             return self.setHidden(True)
@@ -2773,16 +3637,33 @@ class UpcomingEvents(QFrame):
 
 
 class EventButton(QPushButton):
-    def __init__(self, event: ScheduleEvent, override_important=None, second_label=False, callback=None):
+    def __init__(self, event: ScheduleEvent, second_label=False, callback=None):
         super().__init__()
 
-        self.lb_title = QLabel(f'<div style="line-height: 0.9;">{event.name}</div>')
+        self.event = event
+        self.is_important = event.tags.have(Tags.IMPORTANT.YES)
+        self.is_hidden    = event.tags.have(Tags.HIDDEN.YES)
+
+        self.bgr_renderer = None
+        where = event.tags.get(Tags.WHERE)
+        if where:
+            self.set_background_icon(where.payload.get("icon"))
+
+        tags = []
+        if self.is_important:
+            tags.append("<b>")
+        if self.is_hidden:
+            tags.append("<i>")
+
+        self.lb_title = QLabel(f'<div style="line-height: 0.9;">'
+                               f'{"".join(tags)} {event.name} {"".join(tag.replace("<", "</") for tag in tags[::-1])}'
+                               f'</div>')
         self.lb_subtitle = QLabel("Subtitle")
 
         for label, font_size in ((self.lb_title, 20), (self.lb_subtitle, 14)):
             label.setFont(QFont("calibri", font_size))
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setStyleSheet("background-color: transparent;")
+            label.setStyleSheet("background-color: transparent; color: white;")
 
         layout = QVBoxLayout()
         layout.setSpacing(0)
@@ -2793,14 +3674,10 @@ class EventButton(QPushButton):
         if second_label:
             layout.addWidget(self.lb_subtitle)
 
-        self.event = event
-        self.important = override_important or event.tags.have(Tags.IMPORTANT.YES)
+        set_custom_color_scheme(self, *event.color, alpha=150 if self.is_hidden else 255,
+                                addition="border: 8px solid rgb(30, 30, 30);" if self.is_important else "")
 
-
-        set_custom_color_scheme(self, *event.color,
-                                addition="border: 8px solid rgb(30, 30, 30);" if self.important else "")
-
-        self.setFixedHeight(70 if self.important else 60)
+        self.setFixedHeight(70 if self.is_important else 60)
         self.click_event = None
 
         # noinspection PyUnresolvedReferences
@@ -2808,7 +3685,7 @@ class EventButton(QPushButton):
 
         self.setLayout(layout)
 
-        if self.important:
+        if self.is_important:
             self.frame = 0
             self.timer = QTimer(self)
             # noinspection PyUnresolvedReferences
@@ -2821,9 +3698,38 @@ class EventButton(QPushButton):
     def paintEvent(self, a0):
         super().paintEvent(a0)
 
-        if not self.important: return
+        if self.bgr_renderer:
+            self.paint_background_icon()
 
-        paint_highlighted_border(self, self.frame, QColor(255, 0, 0), 150, True, 4)
+        if self.is_important:
+            paint_highlighted_border(self, self.frame, QColor(255, 0, 0), 150, True, 4)
+
+    def set_background_icon(self, path, scale=0.5, offset_x=20, offset_y=10):
+        self.bgr_renderer = QSvgRenderer(f"icons/{path}")
+        if not self.bgr_renderer.isValid():
+            self.bgr_renderer = QSvgRenderer(f"icons/404.svg")
+        svg_size = self.bgr_renderer.defaultSize()
+        self.bgr_icon_width  = int(svg_size.width()  * scale)
+        self.bgr_icon_height = int(svg_size.height() * scale)
+        self.bgr_offset_x = offset_x
+        self.bgr_offset_y = offset_y
+
+    def paint_background_icon(self):
+        painter = QPainter(self)
+        painter.setOpacity(0.3)
+
+        border_width = 10
+        painter.setClipRect(QRectF(
+            border_width / 2,
+            border_width / 2,
+            self.width()  - border_width,
+            self.height() - border_width
+        ))
+
+        x = (self.width()  - self.bgr_icon_width  - border_width + self.bgr_offset_x)
+        y = ((self.height() - self.bgr_icon_height) / 2 - border_width + self.bgr_offset_y)
+
+        self.bgr_renderer.render(painter, QRectF(x, y, self.bgr_icon_width, self.bgr_icon_height))
 
     def set_on_click(self, on_click_func):
         self.click_event = on_click_func

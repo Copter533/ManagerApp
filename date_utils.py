@@ -14,6 +14,8 @@ from tags import TagList, Tags
 from utils import word_case
 
 def rgb_to_hex(rgb_color):
+    if (len(rgb_color) > 3) and (rgb_color[3] != 255):
+        return f'{rgb_color[3]:02X}{rgb_color[0]:02X}{rgb_color[1]:02X}{rgb_color[2]:02X}'
     return f'{rgb_color[0]:02X}{rgb_color[1]:02X}{rgb_color[2]:02X}'
 
 def hex_to_rgb(hex_color):
@@ -385,10 +387,6 @@ class ScheduleEvent:
         if self.tags.get(Tags.LABOR) is None: return True
         return self.tags.get(Tags.LABOR) == other.tags.get(Tags.LABOR)
 
-    # TODO: разобраться что это и сделать
-    def get_sort_value(self, when=None):
-        return 1 # self.multi_date.get_sort_value(when) + self.times * 10000
-
     def get_final_timestamps(self, start_date: date | datetime, end_date: date | datetime = None):
         """
         Возвращает EventStamp'ы дней когда событие произойдёт, учитывая всё:
@@ -424,10 +422,10 @@ class ScheduleEvent:
             times_left -= 1
             if times_left <= 0: return
 
-    def get_next_timestamp(self, now: date, merge_time=False) \
+    def get_next_timestamp(self, now: date, scope=None, merge_time=False) \
             -> EventStamp | None:
         try:
-            stamps_gen = self.get_final_timestamps(now, date(9999, 1, 1))
+            stamps_gen = self.get_final_timestamps(now, date(9999, 1, 1) if scope is None else (now + timedelta(days=scope)))
             first_stamp = next(stamps_gen)
             if not merge_time:
                 return first_stamp
@@ -478,7 +476,7 @@ class ScheduleEvent:
 class Config:
     def __init__(self, obj: dict, file, events):
         self.file   = file
-        self.events = events
+        self.events: list[ScheduleEvent] = events
 
         self.y_view     = obj.get('y_view')     or 0
         self.view_scale = obj.get('view_scale') or 2600

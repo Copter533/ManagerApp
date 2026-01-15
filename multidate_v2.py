@@ -2,12 +2,12 @@ import bisect
 import re
 from abc import abstractmethod, ABC, ABCMeta
 from datetime import date, timedelta, datetime
+from itertools import starmap
 from math import ceil
 from typing import Iterable, Iterator, Optional, Any, Generator
 
 from time_periods import all_periods, TimePeriod
-from utils import tuple_range_to_str, word_case, DebugTimer
-
+from utils import tuple_range_to_str, word_case, DebugTimer, tuple_range_to_ranges
 
 days_of_week = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС']
 months = [
@@ -42,6 +42,10 @@ def time_stamp_to_str(stamp: list[int], mid="-"):
     h1, m1 = map(int, divmod(stamp[0], 60))
     h2, m2 = map(int, divmod(stamp[1], 60))
     return f'{h1}:{"0" if m1 < 10 else ""}{m1}{mid}{h2}:{"0" if m2 < 10 else ""}{m2}'
+
+
+def month_end(day: date):
+    return (day.replace(day=1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
 
 
 class EventStamp:
@@ -94,8 +98,14 @@ class MultiDateHolder(ABC):
         self.periods_constraint = periods_constraint or []
 
         self.periods_constraint_dates: list[TimePeriod] = []
+        if self.periods_constraint:
+            self._merge_periods()
+
+    def _merge_periods(self):
+        periods_starts = []
+        periods_ends   = []
         for period in self.periods_constraint:
-            old_count = len(self.periods_constraint_dates)
+            old_count = len(periods_starts)
 
             if not isinstance(period, str):
                 raise ValueError(f"Неверно задан период: {period} (ожидается строка, получен {type(period).__name__})")
@@ -103,23 +113,48 @@ class MultiDateHolder(ABC):
             try:
                 match = re.fullmatch(r'(\d+\.\d+\.\d+)-(\d+\.\d+\.\d+)', period)
                 if match:
-                    start_date = str_to_datetime(match.group(1)).date()
-                    end_date = str_to_datetime(match.group(2)).date()
-                    self.periods_constraint_dates.append(TimePeriod(start_date, end_date))
+                    st, en = str_to_datetime(match.group(1)).date(), str_to_datetime(match.group(2)).date()
                 else:
                     if period not in all_periods:
                         raise ValueError(f"Период '{period}' не найден в справочнике")
 
-                    period_data = all_periods[period]
-                    self.periods_constraint_dates.append(
-                        TimePeriod(period_data.start, period_data.end)
-                    )
+                    st, en = all_periods[period].start, all_periods[period].end
+
+                if st > en: raise ValueError(f"Неверные границы периода: {period}")
+                bisect.insort_left(periods_starts, st)
+                bisect.insort_left(periods_ends,   en)
 
             except (ValueError, KeyError, AttributeError) as ex:
                 raise ValueError(f"Неверно задан период: {period} ({ex})")
 
-            if old_count == len(self.periods_constraint_dates):
+            if old_count == len(periods_starts):
                 raise ValueError(f"Не удалось обработать период: {period}")
+
+        # TODO: рефактор
+        all_starts = iter(periods_starts)
+        all_ends = iter(periods_ends)
+        cur_start = next(all_starts, None)
+        cur_end   = next(all_ends,   None)
+        while cur_start and cur_end:
+            next_start = next(all_starts, None)
+            next_end = next(all_ends, None)
+            if (next_start and next_end) and (
+                    next_start - cur_end).days <= 1:  # Если есть следующий промежуток, и он вплотную то объединяем
+                cur_end = next_end
+            else:
+                self.periods_constraint_dates.append(
+                    TimePeriod(cur_start, cur_end)
+                )
+                cur_start = next_start
+                cur_end = next_end
+        if cur_start and cur_end:
+            self.periods_constraint_dates.append(
+                TimePeriod(cur_start, cur_end)
+            )
+
+    @staticmethod
+    def get_week_parity(when: date):
+        return when.isocalendar().week % 2
 
     @staticmethod
     def _comparability_v1_to_v2(data_v1):
@@ -229,119 +264,128 @@ class MultiDateHolder(ABC):
     def _impl_to_str(self):
         raise NotImplementedError()
 
-    # TODO: объединение периодов, + более тщательно проверить этот гпт код
-    def clamp_to_constraints_GPT(self, start_date: date, end_date: date) -> Iterator[tuple[date, date]]:
-        if start_date > end_date:
-            return
-
-        current = start_date
-
-        while current <= end_date:
-            # Находим следующий разрешённый период/месяц/год
-            if self.periods_constraint_dates:
-                # Находим ближайший период после current
-                next_period = None
-                for period in self.periods_constraint_dates:
-                    if period.start >= current:
-                        if next_period is None or period.start < next_period[0]:
-                            next_period = (period.start, period.end)
-                if next_period is None:
-                    return
-                seg_start = max(current, next_period[0])
-                seg_end = min(end_date, next_period[1])
-            else:
-                seg_start = current
-                seg_end = end_date
-
-            # Применяем month/year constraints
-            if self.month_constraint or self.year_constraint:
-                cursor = seg_start.replace(day=1)
-                while cursor <= seg_end:
-                    if (not self.year_constraint or cursor.year in self.year_constraint) and \
-                            (not self.month_constraint or cursor.month in self.month_constraint):
-                        month_start = max(seg_start, cursor)
-                        next_month = (cursor + timedelta(days=32)).replace(day=1)
-                        month_end = min(seg_end, next_month - timedelta(days=1))
-                        if month_start <= month_end:
-                            yield month_start, month_end
-                    cursor = (cursor + timedelta(days=32)).replace(day=1)
-                    if cursor > seg_end:
-                        break
-            else:
-                yield seg_start, seg_end
-                return  # если нет constraints — один большой сегмент
-
-            # Переходим к следующему после текущего сегмента
-            current = seg_end + timedelta(days=1)
-
     def clamp_to_constraints(self, start_date: date, end_date: date) -> Generator[tuple[date, date], None, None]:
-        if self.periods_constraint_dates:
-            # noinspection PyTypeChecker
-            start_date = max(start_date, min(map(TimePeriod.get_start, self.periods_constraint_dates)))
-            # noinspection PyTypeChecker
-            end_date   = min(end_date,   max(map(TimePeriod.get_end  , self.periods_constraint_dates)))
+        # TODO: рефактор
+        def yield_target_range():
+            yield start_date, end_date
 
-        def month_edges(should_end):
+        def all_periods_ranges():
+            min_date = start_date
+            for period in self.periods_constraint_dates:
+                if period.start < min_date: continue
+                jump_to = yield period.get_start(), period.get_end()
+                if jump_to: min_date = jump_to
+
+        def all_year_ranges():
+            if not self.year_constraint: return
+            cursor = date(self.year_constraint[0], 1, 1)
+            for year in self.year_constraint:
+                if cursor.year > year: continue
+                cursor = cursor.replace(year=year, month=1, day=1)
+                jump_to = yield cursor, month_end(cursor.replace(month=12))
+                if jump_to: cursor = jump_to
+
+        def all_month_ranges():
             if not self.month_constraint: return
             cursor = start_date.replace(day=1)
             try:
-                while True:
-                    for month in self.month_constraint:
-                        if should_end:
-                            cursor = (cursor.replace(month=month, day=1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
-                        else:
-                            cursor = cursor.replace(month=month, day=1)
-                        if cursor < start_date: continue
-                        if cursor > end_date: return
-                        yield cursor
-                    if cursor.year == 9999: return
-                    cursor = cursor.replace(year=cursor.year + 1)
+                while cursor < end_date:
+                    while True: # Говно кодище
+                        try:
+                            for month in self.month_constraint:
+                                if cursor > end_date: return
+                                if cursor.month > month: continue
+                                cursor = cursor.replace(month=month, day=1)
+                                jump_to = yield cursor, month_end(cursor)
+                                if jump_to:
+                                    cursor = jump_to
+                                    raise ArithmeticError() # Говно кодище
+                            cursor = cursor.replace(year=cursor.year + 1, month=1, day=1)
+                            break
+                        except ArithmeticError: # Говно кодище
+                            pass
             except OverflowError:
                 pass
 
-        def year_edges(should_end):
-            if not self.year_constraint: return
-            cursor = start_date.replace(day=1, month=1)
-            for year in self.year_constraint:
-                if should_end:
-                    cursor = (cursor.replace(year=year, month=12, day=1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+        # Выдаёт недели, чётность которых соответствует заданной, если чётность не указана ничего не выдаёт
+        def all_parity_weeks_ranges():
+            if self.week_parity_constraint is None: return
+            cursor = start_date - timedelta(days=start_date.weekday())
+            while cursor < end_date:
+                if self.get_week_parity(cursor) != self.week_parity_constraint:
+                    cursor += timedelta(days=7)
+                jump_to = yield cursor, cursor + timedelta(days=6)
+                if jump_to: cursor = jump_to - timedelta(days=jump_to.weekday())
+                else: cursor += timedelta(days=7)
+
+        # МЫ СТРОГО РАБОТАЕМ ИЗ ПРЕДПОЛОЖЕНИЯ ЧТО ВСЕ ГЕНЕРАТОРЫ ДАЮТ
+        # СОРТИРОВАННЫЙ НАБОР НЕПЕРЕСЕКАЮЩИХСЯ В ПРЕДЕЛАХ ЭТОГО ГЕНЕРАТОРА
+        # ПРОМЕЖУТКОВ!!! ЕСЛИ ЭТО НЕ ТАК ТО РЕЗУЛЬТАТ БУДЕТ НЕВЕРНЫМ!
+
+        prev_start, prev_end = None, None
+        valid_generators = (
+                [yield_target_range()] +  # Обязателен
+                ([all_parity_weeks_ranges()] if self.week_parity_constraint is not None else []) +
+                ([all_month_ranges()]        if self.month_constraint else []) +
+                ([all_year_ranges()]         if self.year_constraint  else []) +
+                ([all_periods_ranges()]      if self.periods_constraint_dates else [])
+        )
+        try:
+            gens: list[tuple[Generator | Iterator, tuple[date, date]]] = [
+                (gen, next_value)
+                for gen, next_value in [(g, next(g)) for g in valid_generators]
+            ]
+            while gens:
+                # Если пересекаются все со всеми -> Пересекается любой с любым, в том числе и с первым
+                # НО НЕ В ОБРАТКУ! Поэтому не с первым, а с минимальным (он точно со всеми пересечётся)
+                first_val = gens[0][1]
+                seg_start, seg_end = first_val
+                for _, other_val in gens[1:]:
+                    # e2 > s1 AND e1 > s2
+                    if not (other_val[1] >= seg_start and seg_end >= other_val[0]):
+                        # если НЕ пересекаются
+                        break
+                    # Обрезаем исходя из положения, что все промежутки пересекаются
+                    seg_start = max(seg_start, other_val[0])
+                    seg_end   = min(seg_end,   other_val[1])
                 else:
-                    cursor = cursor.replace(year=year, month=1, day=1)
-                if cursor < start_date: continue
-                if cursor > end_date: return
-                yield cursor
+                    if prev_end is None or (seg_start - prev_end).days <= 1:
+                        if prev_start is None: prev_start = seg_start
+                        prev_end = seg_end
+                    else:
+                        yield prev_start, prev_end
+                        prev_start, prev_end = seg_start, seg_end
+                    # Пихаем генератор с наименьшим концом
+                    i = min(range(len(gens)), key=lambda i: gens[i][1][1])
+                    next_value = next(gens[i][0])
+                    gens[i] = (gens[i][0], next_value)
+                    continue
 
-        # noinspection PyTypeChecker
-        all_starts: Iterator[date] = filter(lambda d: d >= start_date and self.does_match_constraints(d), mix_gen_or_multi(
-            map(TimePeriod.get_start, self.periods_constraint_dates),
-            month_edges(should_end=False),
-            year_edges (should_end=False),
-            [start_date]
-        ))
+                # Если не ок, то пихаем генераторы так, чтобы они могли пересекаться
+                # (т.е. пихаем те, у которых конец периода не достаёт до начала max периода
+                # При возникновении StopIteration или промежутка за обозреваемыми границами завершаем вычисление
+                max_gen, max_value = max(gens, key=lambda entry: entry[1][0])
+                # Тут обязательно list-comprehensions вместо генераторного выражения, ведь в генераторном
+                # выражении при вызове StopIteration от генератора, заставит его заплакать и преобразовать его
+                # в RuntimeError, что нам нахер не надо
+                gens = [
+                    (gen, next_value)
+                    for gen, next_value in (
+                        [(gen2, (gen2.send(max_value[0]) if val2[1] < max_value[0] else val2)) for gen2, val2 in gens]
+                    )
+                ]
+        except StopIteration: pass
 
-        # noinspection PyTypeChecker
-        all_ends: Iterator[date]   = filter(lambda d: d <= end_date and self.does_match_constraints(d), mix_gen_or_multi(
-            map(TimePeriod.get_end, self.periods_constraint_dates),
-            month_edges(should_end=True),
-            year_edges (should_end=True),
-            [end_date]
-        ))
-
-        cur_start = next(all_starts, None)
-        cur_end   = next(all_ends,   None)
-        while cur_start and cur_end:
-            next_start = next(all_starts, None)
-            next_end   = next(all_ends,   None)
-            if (next_start and next_end) and (next_start - cur_end).days <= 1:  # Если есть следующий промежуток, и он вплотную то объединяем
-                cur_end = next_end
-            else:
-                yield cur_start, cur_end
-                cur_start = next_start
-                cur_end   = next_end
-        if cur_start and cur_end:
-            yield cur_start, cur_end
+        if prev_start and prev_end:
+            yield prev_start, prev_end
 
     def does_match_constraints(self, when_date: date):
+        if self.year_constraint and when_date.year not in self.year_constraint:
+            return False
+
+        if self.month_constraint and when_date.month not in self.month_constraint:
+            return False
+
         for period in self.periods_constraint_dates:  # Все периоды через ИЛИ
             if period.start <= when_date <= period.end:
                 break
@@ -349,11 +393,9 @@ class MultiDateHolder(ABC):
             if self.periods_constraint_dates:
                 return False
 
-        if self.year_constraint and when_date.year not in self.year_constraint:
-            return False
-
-        if self.month_constraint and when_date.month not in self.month_constraint:
-            return False
+        if self.week_parity_constraint is not None:
+            if self.get_week_parity(when_date) != self.week_parity_constraint:
+                return False
 
         return True
 
@@ -416,6 +458,14 @@ class MultiDateHolder(ABC):
         return next(self.get_all_timestamps(when_date, date(9999, 1, 1)), None)
 
 
+def constraint_range(holder: MultiDateHolder, st_date: date, en_date: date):
+    return tuple_range_to_ranges([
+        st_date + timedelta(days=day_i)
+        for day_i in range((en_date - st_date).days + 1)
+        if holder.does_match_constraints(st_date + timedelta(days=day_i))
+    ], comparator=lambda a, b: (b - a).days <= 1)
+
+
 class MultiDateEmpty(MultiDateHolder):
     def __init__(self, **constraints):
         super().__init__([0, 0], **constraints)
@@ -434,6 +484,17 @@ class MultiDateEmpty(MultiDateHolder):
 
     def _impl_count_timestamps(self, start_date: date, end_date: date) -> int:
         return 0
+
+
+if __name__ == '__main__':
+    h = MultiDateEmpty(
+        year_constraint=[2026],
+        month_constraint=[1, 2, 3],
+        periods_constraint=["08.02.2024-15.02.2026"],
+        week_parity_constraint=1
+    )
+    print(*list(h.clamp_to_constraints(date(1, 1, 1), date(9999, 12, 31))), sep="\n")
+    exit()
 
 
 class MultiDateWeekday(MultiDateHolder):

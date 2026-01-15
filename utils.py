@@ -1,4 +1,5 @@
 from time import time
+from typing import TypeVar, Tuple, Callable
 
 
 def word_case(num, for1, for2, for5, pref=None):
@@ -34,6 +35,37 @@ def tuple_range_to_str(v: tuple | list, replacer=None, sep=', '):
             res.append([arr[i]])
 
     return sep.join([str(replacer(a[0])) if len(a) == 1 else f'{replacer(a[0])}-{replacer(a[1])}' for a in res])
+
+
+T = TypeVar('T')
+def tuple_range_to_ranges(
+        v: Tuple[T] | list[T],
+        comparator: Callable[[T, T], bool]=lambda x, y: abs(x - y) <= 1
+) -> list[list[T]]:
+    """
+    Возвращает строку с объединёнными соседними промежутками из кортежа\n
+    Пример: (1,2,3,5) -> "1-3, 5"
+    :param comparator:
+    :param v: Кортеж элементов
+    """
+    if not v: return []
+    if len(v) == 1: return [[v[0], v[0]]]
+
+    arr = sorted(v)
+    ranges = []
+    start = arr[0]
+    end = arr[0]
+
+    for i in range(1, len(arr)):
+        if comparator(arr[i - 1], arr[i]):
+            end = arr[i]
+        else:
+            ranges.append((start, end))
+            start = arr[i]
+            end = arr[i]
+
+    ranges.append((start, end))
+    return ranges
 
 
 class DebugTimer:

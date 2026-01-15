@@ -28,6 +28,10 @@ class TimePeriod:
     def get_start(self): return self.start
     def get_end(self):   return self.end
 
+    def __eq__(self, other):
+        if not isinstance(other, TimePeriod): return False
+        return self.start == other.start and self.end == other.end
+
 
 all_periods = {
     'Семестр 1':     TimePeriod(date(2024, 9, 1), date(2024, 12, 29), row=1),
